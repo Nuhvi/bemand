@@ -43,20 +43,21 @@ class ValueModel:
         self.series = self.series.sort_index()
 
 
-def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 30,
+def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 26,
                        wma_w: int = 350, a: float = FIT_A, b: float = FIT_B) -> dict[str, ValueModel]:
     """Return {name: ValueModel} for DBTC / wma(≈50w) / wma200 / spot from launch onwards.
 
-    ``wma_w`` (default 350 days ≈ 50 weeks) is the accounting-anchor SMA the
-    DBTC value is calibrated to. a 200-week SMA (4 * wma_w) is added as a
-    long-run reference line.
+    ``diff_w`` (default 26) is the DBTC smoothing window in difficulty
+    periods (2016 blocks each). ``wma_w`` (default 350 days ≈ 50 weeks) is the
+    accounting-anchor SMA the DBTC value is calibrated to. a 200-week SMA
+    (4 * wma_w) is added as a long-run reference line.
     """
     ts = pd.Timestamp(launch)
     d = df.loc[df.index >= ts].copy()
     spot = d["price"]
 
     # DBTC: difficulty only, calibrated to the wma anchor at launch.
-    sd = d["difficulty"].rolling(diff_w, min_periods=1).mean()
+    sd = analyze.smoothed_diff(df, diff_w).reindex(d.index)
     ref_sd = sd.iloc[0]
     anchor = spot.rolling(wma_w, min_periods=1).mean().iloc[0]
     dbtc = anchor * np.exp(a) * (sd / ref_sd) ** b
@@ -151,12 +152,12 @@ def salary_cashflow(model: ValueModel, df: pd.DataFrame, launch: str,
     })
 
 
-def fit_law(df: pd.DataFrame, since: str, diff_w: int = 30) -> dict:
+def fit_law(df: pd.DataFrame, since: str, diff_w: int = 26) -> dict:
     """Fit the difficulty->price power law on data from ``since`` onwards.
 
-    Returns dict with exponent 'b', intercept 'a' (log), R^2, median relative
-    error and n. Uses the existing cross-sectional OLS in analyze.evaluate
-    with t0 = ``since``.
+    ``diff_w`` is the smoothing window in difficulty periods. Returns dict with
+    exponent 'b', intercept 'a' (log), R^2, median relative error and n. Uses
+    the existing cross-sectional OLS in analyze.evaluate with t0 = ``since``.
     """
     r = analyze.evaluate(df, diff_w, t0=since)
     return {
@@ -169,22 +170,23 @@ def fit_law(df: pd.DataFrame, since: str, diff_w: int = 30) -> dict:
     }
 
 
-def dbtc_series(df: pd.DataFrame, since: str, smooth: int = 270,
+def dbtc_series(df: pd.DataFrame, since: str, smooth: int = 26,
                 b: float | None = None) -> pd.Series:
     """DBTC price anchored to spot at ``since`` via difficulty^b.
 
-    Returns a daily USD series for 1 DBTC from ``since`` onwards. If
-    ``b`` is None, auto-fit on the [since..end] sample.
+    ``smooth`` is the smoothing window in difficulty periods. Returns a daily
+    USD series for 1 DBTC from ``since`` onwards. If ``b`` is None, auto-fit on
+    the [since..end] sample.
     """
     d = df.loc[df.index >= pd.Timestamp(since)].copy()
     spot = d["price"]
     if b is None:
         b = fit_law(df, since, smooth)["b"]
-    sd = d["difficulty"].rolling(smooth, min_periods=1).mean()
+    sd = analyze.smoothed_diff(df, smooth).reindex(d.index)
     return spot.iloc[0] * (sd / sd.iloc[0]) ** b
 
 
-def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 270, since: str = "2014-01-01",
+def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 26, since: str = "2014-01-01",
                           b: float | None = None) -> dict:
     """Merchant that prices goods in DBTC and pays USD costs monthly.
 
@@ -208,7 +210,7 @@ def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 270, since: str = "201
     }
 
 
-def collateral_metrics(df: pd.DataFrame, smooth: int = 270, since: str = "2014-01-01",
+def collateral_metrics(df: pd.DataFrame, smooth: int = 26, since: str = "2014-01-01",
                        b: float | None = None) -> dict:
     """Collateral ratio RBTC/DBTC and backing required never to liquidate.
 
@@ -241,7 +243,7 @@ def ratio_index(df: pd.DataFrame, since: str) -> pd.Index:
 
 def run_all(df: pd.DataFrame, launch: str, n_months: int = 120,
             float_months: int = 1, b: float | None = None,
-            smooth: int = 270) -> dict:
+            smooth: int = 26) -> dict:
     """Backtest all models x scenarios, return {key: summary}."""
     models = build_value_models(df, launch, a=0.0, b=(b or FIT_B), diff_w=smooth)
     out = {}

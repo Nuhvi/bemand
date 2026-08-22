@@ -216,50 +216,50 @@ def chart_cumulative(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch:
 
 def chart_w_sweep_merchant(df, since, bs=(0.53, 0.73), window="ME"):
     """Per iteration window W: merchant worst-month / worst-12m / max drawdown."""
-    wdays = [30, 60, 90, 120, 180, 270, 365, 540, 730]
+    wpds = [4, 8, 13, 20, 26, 39, 52, 78, 104]
     fig, ((a1, a2), (a3, a4)) = plt.subplots(2, 2, figsize=(12, 8))
     for b in bs:
         worst_m, worst12, last_price = [], [], []
-        for w in wdays:
+        for w in wpds:
             mm = bt.merchant_loss_metrics(df, smooth=w, since=since, b=b)
             worst_m.append(mm["worst_month"] * 100)
             worst12.append(mm["worst_12m_ann"] * 100)
             last_price.append(mm["end_price"])
-        a1.plot(wdays, worst_m, "o-", label=f"b={b}")   # lower (less negative) = better
-        a2.plot(wdays, worst12, "o-", label=f"b={b}")
-        a3.plot(wdays, last_price, "o-", label=f"b={b}")
+        a1.plot(wpds, worst_m, "o-", label=f"b={b}")   # lower (less negative) = better
+        a2.plot(wpds, worst12, "o-", label=f"b={b}")
+        a3.plot(wpds, last_price, "o-", label=f"b={b}")
     a1.axhline(0, color="#bbb", ls="--")
     a1.set_yscale("symlog", linthresh=1)
     a1.set_title("worst month return"); a1.set_xscale("log"); a1.grid(alpha=0.3)
     a2.set_title("worst 12-month return"); a2.set_xscale("log"); a2.grid(alpha=0.3)
     a3.set_title("terminal DBTC price (USD)"); a3.set_xscale("log"); a3.grid(alpha=0.3)
-    a4.plot(wdays, [bt.collateral_metrics(df, smooth=w, since=since, b=bs[0])["collat_never"] for w in wdays],
+    a4.plot(wpds, [bt.collateral_metrics(df, smooth=w, since=since, b=bs[0])["collat_never"] for w in wpds],
             "o-", label=f"b={bs[0]} never")
-    a4.plot(wdays, [bt.collateral_metrics(df, smooth=w, since=since, b=bs[1])["collat_never"] for w in wdays],
+    a4.plot(wpds, [bt.collateral_metrics(df, smooth=w, since=since, b=bs[1])["collat_never"] for w in wpds],
             "o-", label=f"b={bs[1]} never")
     a4.set_title("collateral multiple to never liquidate (spot/DBTC)"); a4.set_xscale("log"); a4.grid(alpha=0.3)
     for ax in (a1, a2, a3, a4):
         ax.legend(fontsize=8)
-    a4.set_xlabel("smoothing window W (days)")
+    a4.set_xlabel("smoothing window W (difficulty periods)")
     fig.suptitle(f"merchant-loss & collateral vs smoothing window (since={pd.Timestamp(since).date()})")
     return _save(fig, "07_w_sweep.png")
 
 
 def chart_merchant_window(df, since, b=0.73):
     """Heatmap of worst monthly return across W (drives merchant safety)."""
-    wdays = [30, 45, 60, 90, 120, 180, 270, 365, 540, 730]
-    vals = [bt.merchant_loss_metrics(df, smooth=w, since=since, b=b)["worst_month"] * 100 for w in wdays]
+    wpds = [4, 8, 13, 20, 26, 39, 52, 78]
+    vals = [bt.merchant_loss_metrics(df, smooth=w, since=since, b=b)["worst_month"] * 100 for w in wpds]
     fig, ax = plt.subplots(figsize=(9, 4))
     colors = ["#c62828" if v < -5 else ("#f9a825" if v < -1 else "#43a047") for v in vals]
-    ax.bar([str(w) for w in wdays], vals, color=colors)
+    ax.bar([str(w) for w in wpds], vals, color=colors)
     ax.axhline(0, color="#000", lw=1)
-    ax.set_ylabel("worst month %"); ax.set_xlabel("smoothing W (days)")
+    ax.set_ylabel("worst month %"); ax.set_xlabel("smoothing W (difficulty periods)")
     ax.set_title(f"merchant worst-month return by smoothing (b={b}, since {pd.Timestamp(since).date()})")
     ax.grid(axis="y", alpha=0.3)
     return _save(fig, "08_merchant_window.png")
 
 
-def chart_collateral_ts(df, since, smooth=270, b=0.73):
+def chart_collateral_ts(df, since, smooth=26, b=0.73):
     """Spot/DBTC collateral ratio over time, marking the binding low."""
     P = bt.dbtc_series(df, since, smooth, b)
     spot = df["price"].reindex(P.index).ffill()
@@ -271,7 +271,7 @@ def chart_collateral_ts(df, since, smooth=270, b=0.73):
     ax.axvline(bd, color="#c62828", ls="--", lw=1.2,
                label=f"binding low {bd.date()} ({rn.min():.2f})")
     ax.set_ylabel("collateral ratio spot/DBTC (normalised)")
-    ax.set_title(f"collateral ratio over time — need ~{1/rn.min():.1f}x to cover the floor (b={b}, W={smooth}d)")
+    ax.set_title(f"collateral ratio over time — need ~{1/rn.min():.1f}x to cover the floor (b={b}, W={smooth}p)")
     ax.legend(fontsize=8); ax.grid(alpha=0.3); ax.set_yscale("log")
     return _save(fig, "09_collateral_ts.png")
 
@@ -283,8 +283,8 @@ def main() -> int:
                         help="launch date (default: today-Y years)")
     parser.add_argument("--since", default="2016-01-01",
                         help="data window used to fit & evaluate (default 2016-01-01, drops pre-2013 + 2013-15 drift)")
-    parser.add_argument("--smooth", type=int, default=270,
-                        help="difficulty smoothing window W in days (default 270)")
+    parser.add_argument("--smooth", type=int, default=26,
+                        help="difficulty smoothing window in periods of 2016 blocks (default 26 ≈ 1 year)")
     parser.add_argument("--law-b", type=float, default=None,
                         help="override the fitted exponent b (default: auto-fit on --since)")
     parser.add_argument("--t0", default=None, help="deprecated; use --since")
@@ -307,15 +307,15 @@ def main() -> int:
         b = bt.fit_law(df, since)["b"]
     else:
         b = args.law_b
-    print(f"\n[config] since={since}  smoothW={args.smooth}d  law exponent b={b:.3f}")
+    print(f"\n[config] since={since}  smoothW={args.smooth}p  law exponent b={b:.3f}")
 
     # Merchant answer.
     mm = bt.merchant_loss_metrics(df, args.smooth, since, b)
     cm = bt.collateral_metrics(df, args.smooth, since, b)
-    print(f"\n[merchant, USD costs, W={args.smooth}d]"
+    print(f"\n[merchant, USD costs, W={args.smooth}p]"
           f"  worst month={mm['worst_month']*100:.1f}%  worst 12m={mm['worst_12m_ann']*100:.1f}%  "
           f"months<launch={mm['frac_below_launch']*100:.0f}%  maxDD={mm['max_price_drawdown']*100:.1f}%")
-    print(f"[collateral spot/DBTC, W={args.smooth}d]"
+    print(f"[collateral spot/DBTC, W={args.smooth}p]"
           f"  min={cm['min']:.3f} (bind {cm['bind_date']})  p1={cm['p1']:.3f}  "
           f"need ≥{cm['collat_never']:.1f}x to never liquidate, ≥{cm['collat_p1']:.1f}x at p1")
 

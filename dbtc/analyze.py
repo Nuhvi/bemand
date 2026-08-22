@@ -15,8 +15,13 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-# Windows tried for the difficulty moving average, in days.
-WINDOWS_DAYS = [1, 7, 14, 30, 45, 60, 90, 120, 180, 270, 365, 540, 730, 1095, 1400]
+# Windows tried for the difficulty moving average, in difficulty periods.
+# A difficulty period is 2016 blocks (~2 weeks), so 26 periods ≈ 1 year: the
+# flagship smoothing used in `lending.py` and the reference contract.
+WINDOWS_PERIODS = [1, 2, 4, 6, 8, 13, 20, 26, 39, 52, 78, 104]
+
+# Default smoothing window: 26 difficulty periods (≈ one year).
+DEFAULT_WINDOW = 26
 
 # Default reference: 2010-07-18 is the first day with a nonzero price.
 DEFAULT_T0 = "2010-07-18"
@@ -54,13 +59,39 @@ def load_data(data_dir: str | None = None) -> pd.DataFrame:
     return df
 
 
+def period_index(difficulty: pd.Series) -> pd.Series:
+    """Map each day to the index of its 2016-block difficulty period.
+
+    Difficulty is constant within a period, so a period boundary is wherever the
+    daily difficulty value changes. Returns an integer Series indexed like
+    ``difficulty``, 0,1,2,… for the periods in chronological order.
+    """
+    chg = (difficulty != difficulty.shift(1)).fillna(True)
+    return chg.cumsum() - 1
+
+
+def smoothed_diff(df: pd.DataFrame, window: int) -> pd.Series:
+    """Mean difficulty over the trailing `window` difficulty periods.
+
+    Each of the last ``window`` periods counts once, equal-weight (matching the
+    on-chain ring buffer used by the reference contract). ``window`` is in
+    periods (2016 blocks), not days. Before `window` periods of history exist
+    the mean is over whatever is available (min_periods=1).
+    """
+    dif = df["difficulty"]
+    p = period_index(dif)
+    per = dif.groupby(p).first()                     # one difficulty per period
+    per_sm = per.rolling(window, min_periods=1).mean()
+    return p.map(per_sm).reindex(df.index)
+
+
 def _prep_ratios(df: pd.DataFrame, window: int, t0: str) -> pd.DataFrame:
     """Return normalised log-ratios (and smoothed diff) w.r.t. t0."""
     t0_ts = pd.Timestamp(t0)
     sub = df.loc[df.index >= t0_ts].copy()
     if sub.empty:
         raise ValueError(f"t0={t0} after end of data")
-    sub["diff_sm"] = sub["difficulty"].rolling(window, min_periods=1).mean()
+    sub["diff_sm"] = smoothed_diff(df, window).loc[sub.index]
     ref = sub.iloc[0]  # first sample at/after t0
     sub["lr"] = np.log(sub["price"] / ref["price"])          # relative log-price
     sub["ld"] = np.log(sub["diff_sm"] / ref["diff_sm"])      # relative log-diff
@@ -109,13 +140,13 @@ def evaluate(
 
 
 def run_all(df: pd.DataFrame, windows=None, t0: str = DEFAULT_T0) -> list[WindowResult]:
-    windows = windows or WINDOWS_DAYS
+    windows = windows if windows is not None else WINDOWS_PERIODS
     out = []
     for w in windows:
         try:
             out.append(evaluate(df, w, t0))
         except ValueError as exc:
-            print(f"  window {w:>5}d skipped: {exc}")
+            print(f"  window {w:>5d}p skipped: {exc}")
     out.sort(key=lambda r: r.corr_log, reverse=True)
     return out
 
@@ -150,7 +181,7 @@ def deviation_series(df: pd.DataFrame, res: WindowResult, t0: str) -> pd.DataFra
 def to_frame(results: list[WindowResult]) -> pd.DataFrame:
     rows = [
         {
-            "window_days": r.window,
+            "window": r.window,
             "n": r.n,
             "corr_log": r.corr_log,
             "r2_log": r.r_squared,
@@ -162,4 +193,4 @@ def to_frame(results: list[WindowResult]) -> pd.DataFrame:
         }
         for r in results
     ]
-    return pd.DataFrame(rows).set_index("window_days")
+    return pd.DataFrame(rows).set_index("window")

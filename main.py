@@ -57,7 +57,7 @@ def main() -> int:
     print(fr.to_string(float_format=lambda x: f"{x:.4f}"))
     print(
         "\n[best]\n"
-        f"  window            : {best.window} days\n"
+        f"  window            : {best.window} difficulty periods\n"
         f"  corr(log ratios)  : {best.corr_log:.4f}\n"
         f"  R^2 (log fit)     : {best.r_squared:.4f}\n"
         f"  fitted slope a    : {best.intercept:.4f}\n"
@@ -69,7 +69,7 @@ def main() -> int:
     # Sensitivity: how stable is the best window?
     print("[top windows]")
     for r in results[:3]:
-        print(f"  {r.window:>5}d  corr={r.corr_log:.4f}  R2={r.r_squared:.4f}  mederr={r.median_abs_error*100:.1f}%")
+        print(f"  {r.window:>4}p  corr={r.corr_log:.4f}  R2={r.r_squared:.4f}  mederr={r.median_abs_error*100:.1f}%")
 
     # 3. Charts (updated every run).
     paths = [

@@ -14,11 +14,11 @@ Design:
     The collateral ratio in law-space is exactly CR by construction.
   * Liquidation (difficulty-based): when the smoothed difficulty falls to
       (1/CR)^(1/b)  x its level at your mint  you are liquidated.
-    Since 2016 the worst drawdown of the 365d-smoothed difficulty from its
+    Since 2016 the worst drawdown of the 26-period-smoothed difficulty from its
     ATH is only ~ -2%, so this floor has never been close.
 
 Run:
-    python lending.py                       # defaults: since 2016-01-01, smoother 365, CR 3.0
+    python lending.py                       # defaults: since 2016-01-01, smoother 26 periods, CR 3.0
     python lending.py --collat 2.5          # try a looser ratio
     python lending.py --since 2017-01-01    # other anchor
 """
@@ -60,8 +60,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--since", default="2016-01-01",
                         help="anchor date for frozen constants (default 2016-01-01)")
-    parser.add_argument("--smooth", type=int, default=365,
-                        help="difficulty smoothing window in days (recommended 365)")
+    parser.add_argument("--smooth", type=int, default=26,
+                        help="difficulty smoothing window in periods of 2016 blocks (recommended 26 ≈ 1 year)")
     parser.add_argument("--collat", type=float, default=3.0,
                         help="collateral ratio (recommended 3.0)")
     parser.add_argument("--law-b", type=float, default=None,
@@ -80,7 +80,7 @@ def main() -> int:
     P0 = float(df["price"].iloc[anchor_idx]) * np.exp(a)
 
     d = df.loc[df.index >= pd.Timestamp(args.since)].copy()
-    sd = d["difficulty"].rolling(args.smooth, min_periods=1).mean()
+    sd = analyze.smoothed_diff(df, args.smooth).reindex(d.index)
     D0 = sd.iloc[0]
     growth = sd / D0                 # D(t)/D0, pure difficulty ratio
     smooth_per_btc = growth ** b     # DBTC/BTC = (D_ratio)^b  [CR=1]
@@ -114,7 +114,7 @@ def main() -> int:
     dd_smooth = float((smooth_usd / smooth_usd.cummax() - 1).min())
     dd_spot = float((spot_series / spot_series.cummax() - 1).min())
 
-    print("[lending] frozen settings: since={}  smoothingW={}d  exponent b={:.3f}  CR={:.2f}x".format(
+    print("[lending] frozen settings: since={}  smoothingW={} periods  exponent b={:.3f}  CR={:.2f}x".format(
         args.since, args.smooth, b, CR))
     print(f"          P0 (frozen USD calibration) = {_fmt_usd(P0)}   "
           f"(spot at anchor × exp(a); set once, USD not consulted at runtime)")
@@ -144,13 +144,13 @@ def main() -> int:
     print(f"   you are liquidated when smoothed difficulty ≤ {floor_ratio*100:.1f}% of its value at mint")
     print(f"   (floor = (1/CR)^(1/b) = (1/{CR:.1f})^(1/{b:.3f})).")
     w = (ath_dd).idxmin()
-    print(f"   worst historical drawdown of the {args.smooth}d-smoothed difficulty from an ATH: "
+    print(f"   worst historical drawdown of the {args.smooth}p-smoothed difficulty from an ATH: "
           f"{ath_dd.min()*100:.1f}% on {w.date()}  ->  floor never triggered in backtest.")
     # spot-linked caveat uses the actual spot/DBTC deviation (from backtest).
-    dev_min = 0.375   # 2020-03-13 worst spot/DBTC deviation at W=365d
+    dev_min = float((spot_series / smooth_usd).min())  # worst spot/DBTC on record
     margin = dev_min * CR - 1
     print(f"   caveat: in the USD/spot view the worst deviation was spot/DBTC = {dev_min:.2f} on "
-          f"2020-03-13 (spot crashed while difficulty kept climbing); at CR={CR:.1f} that leaves a "
+          f"the record (spot crashed while difficulty kept climbing); at CR={CR:.1f} that leaves a "
           f"{margin*100:+.0f}% margin above the spot-linked floor — the thin spot deviation, not "
           f"difficulty, is the real risk.")
     print()

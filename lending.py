@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from smoothbtc import analyze  # noqa: E402
 from smoothbtc import backtest as bt  # noqa: E402
+from smoothbtc import COLORS, shade  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
 
@@ -180,7 +181,7 @@ def main() -> int:
     for ax, days, title in ((axes[0, 0], 30, "last 30 days"),
                             (axes[0, 1], 365, "last 12 months")):
         sub = smooth_usd.loc[smooth_usd.index >= last - pd.Timedelta(days=days)]
-        ax.plot(sub.index, sub, color="#1f9d55", lw=1.4)
+        ax.plot(sub.index, sub, color=COLORS["sbtc"], lw=1.4)
         ax.set_ylabel("USD / SmoothBTC")
         ax.set_title(f"SmoothBTC/USD — {title}")
         ax.grid(alpha=0.3)
@@ -189,9 +190,9 @@ def main() -> int:
     # bottom-left: SmoothBTC/BTC 12m + 30d inset shading
     ax = axes[1, 0]
     sub = smooth_per_btc.loc[smooth_per_btc.index >= last - pd.Timedelta(days=365)]
-    ax.plot(sub.index, sub, color="#b8860b", lw=1.4)
+    ax.plot(sub.index, sub, color=shade(COLORS["sbtc"]), lw=1.4)
     sub30 = smooth_per_btc.loc[smooth_per_btc.index >= last - pd.Timedelta(days=30)]
-    ax.fill_between(sub30.index, sub30.min(), sub30.max(), alpha=0.2, color="#b8860b",
+    ax.fill_between(sub30.index, sub30.min(), sub30.max(), alpha=0.2, color=shade(COLORS["sbtc"]),
                     label="last 30d band")
     ax.set_ylabel("SmoothBTC / BTC")
     ax.set_title(f"SmoothBTC/BTC — last 12 months (now {spb_now:.2f})")
@@ -200,7 +201,7 @@ def main() -> int:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     # bottom-right: difficulty ratio and liquidation floor
     ax = axes[1, 1]
-    ax.plot(growth.index, growth, color="#1a73e8", lw=1.0, label="smoothed difficulty ratio D(t)/D0")
+    ax.plot(growth.index, growth, color=COLORS["sbtc"], lw=1.0, label="smoothed difficulty ratio D(t)/D0")
     ax.axhline(growth_now * floor_ratio, color="#c62828", ls="--", lw=1.4,
                label=f"liquidation floor {floor_ratio:.2f}× of mint level")
     ax.axhline(1.0, color="#bbb", ls=":", lw=1.0, label="anchor t0 (ratio = 1)")

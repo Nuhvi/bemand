@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from . import analyze
+from . import COLORS  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "out"
 
@@ -27,16 +28,16 @@ def _save(fig, name: str) -> Path:
 
 def chart_raw(df: pd.DataFrame) -> Path:
     fig, (a1, a2) = plt.subplots(2, 1, sharex=True, figsize=(11, 8))
-    a2.plot(df.index, df["difficulty"], color="#f7931a", lw=0.9)
+    a2.plot(df.index, df["difficulty"], color=COLORS["sbtc"], lw=0.9)
     a2.set_yscale("log")
     a2.set_ylabel("network difficulty (log)")
     a2.set_title("raw data (since 2009)")
     a2.grid(alpha=0.3)
 
-    a1.plot(df.index, df["price"], color="#1a73e8", lw=0.9)
+    a1.plot(df.index, df["price"], color=COLORS["spot"], lw=0.9)
     a1.set_yscale("log")
     a1.set_ylabel("BTC price USD (log)")
-    a1.legend(["price"], loc="upper left")
+    a1.legend(["price (spot)"], loc="upper left")
     a1.grid(alpha=0.3)
 
     a2.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
@@ -47,8 +48,8 @@ def chart_smoothed_vs_price(df: pd.DataFrame, best_w: int, t0: str) -> Path:
     """Normalised smoothed-difficulty ratios vs normalised price."""
     sub = analyze._prep_ratios(df, best_w, t0)
     fig, ax = plt.subplots(figsize=(11, 5))
-    ax.plot(sub.index, sub["lr"], color="#1a73e8", lw=1.1, label="ln(price/price_t0)")
-    ax.plot(sub.index, sub["ld"], color="#1f9d55", lw=1.1, label=f"ln(diff_sm{best_w}/diff_sm{best_w}_t0)")
+    ax.plot(sub.index, sub["lr"], color=COLORS["spot"], lw=1.1, label="ln(price/price_t0)")
+    ax.plot(sub.index, sub["ld"], color=COLORS["sbtc"], lw=1.1, label=f"ln(diff_sm{best_w}/diff_sm{best_w}_t0)")
     ax.legend(loc="upper left")
     ax.set_title(f"normalised log-ratios vs t0={t0}  (smoothing window={best_w}d)")
     ax.grid(alpha=0.3)
@@ -99,8 +100,8 @@ def chart_price_space(df: pd.DataFrame, best: analyze.WindowResult, t0: str) -> 
     ref_p = sub.iloc[0]["price"]
     pred_p = ref_p * np.exp(best.intercept + best.slope * sub["ld"])
     fig, ax = plt.subplots(figsize=(11, 5))
-    ax.plot(sub.index, sub["price"], lw=1.0, color="#1a73e8", label="actual BTC price")
-    ax.plot(sub.index, pred_p, lw=1.0, color="#1f9d55", ls="--",
+    ax.plot(sub.index, sub["price"], lw=1.0, color=COLORS["spot"], label="actual BTC price")
+    ax.plot(sub.index, pred_p, lw=1.0, color=COLORS["sbtc"], ls="--",
             label=f"difficulty proxy: price_t0*exp(a+b*ld), W={best.window}d (a={best.intercept:.2f}, b={best.slope:.2f})")
     ax.set_yscale("log")
     ax.legend(fontsize=8, loc="upper left")
@@ -113,9 +114,9 @@ def chart_deviation(df: pd.DataFrame, best: analyze.WindowResult, t0: str) -> Pa
     """Predicted/actual price ratio over time: shows where the model over/under tracks."""
     dev = analyze.deviation_series(df, best, t0)
     fig, ax = plt.subplots(figsize=(11, 4))
-    ax.plot(dev.index, dev["dev"], lw=0.9, color="#8e24aa")
+    ax.plot(dev.index, dev["dev"], lw=0.9, color=COLORS["sbtc"])
     ax.axhline(1.0, color="#000", lw=1)
-    ax.fill_between(dev.index, dev["dev"], 1.0, alpha=0.15, color="#8e24aa")
+    ax.fill_between(dev.index, dev["dev"], 1.0, alpha=0.15, color=COLORS["sbtc"])
     q = dev["dev"].quantile([0.05, 0.5, 0.95])
     ax.set_yscale("log")
     for pct, v in q.items():
@@ -130,7 +131,7 @@ def chart_deviation(df: pd.DataFrame, best: analyze.WindowResult, t0: str) -> Pa
 def chart_rolling_corr(df: pd.DataFrame, best_w: int, t0: str, span_days: int = 365) -> Path:
     roc = analyze.rolling_corr(df, best_w, t0, span_days)
     fig, ax = plt.subplots(figsize=(11, 4))
-    ax.plot(roc.index, roc["corr"], lw=1.0, color="#2e7d32")
+    ax.plot(roc.index, roc["corr"], lw=1.0, color="#1a73e8")
     ax.set_ylim(0, 1.001)
     ax.set_ylabel(f"rolling corr (span={span_days}d)")
     ax.set_title(f"rolling correlation of ln(price_ratio) vs ln(diff_ratio), W={best_w}d")

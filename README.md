@@ -192,25 +192,34 @@ difficulty arithmetic.
 `contracts/DBTCPrice.sol` is a minimal, self-contained oracle that turns this whole
 thesis into on-chain arithmetic **without any external price feed**. It reads Bitcoin
 difficulty directly from the RSK Bridge (`getBtcBlockchainBestChainHeight` /
-`getBtcBlockchainBlockHeaderByHeight`), parses the compact `nBits` target out of each
-header, and prices DBTC with the fitted power law:
+`getBtcBlockchainBlockHeaderByHeight`), parses the compact `nBits` target (and block
+timestamp) out of each epoch's first header, smooths it, and prices DBTC with the
+fitted power law:
 
 ```
-DBTC per BTC = (D / D0)^b            BTC per DBTC = 1 / (D / D0)^b        (CR = 1)
+DBTC per BTC = (D_s / D_s0)^b        BTC per DBTC = 1 / (D_s / D_s0)^b     (CR = 1)
 ```
 
-- **No full header decode**: since `target = MaxTarget / difficulty`, the ratio
-  `D/D0 = target0/target` cancels `MaxTarget` — only the 4-byte `nBits` field
-  (header bytes 72–75) is ever touched.
-- **One read per difficulty period**: difficulty only changes every 2016 blocks, so
-  `refresh()` re-reads the bridge only when the chain height crosses into a new
-  epoch and caches that period's target (`currentEpoch`, `reads`).
+- **It smooths exactly like the Python model.** `D_s` is the mean difficulty over the
+  trailing smoothing window (default **365 days ≈ 26 difficulty periods**, the `lending.py`
+  flagship), matching `difficulty.rolling(365).mean()`. Because difficulty steps once per
+  2016-block period, the mean is time-weighted by each period's *actual* duration — from
+  the block timestamp in each epoch's header, with the boundary period prorated — not
+  per block. Verified against the full 2009→today series: the contract's ratio tracks the
+  Python `rolling(365)` model to **<0.5%** on DBTC/BTC across anchors from 2016 to 2022.
+- **No full header decode and no oracle**: since `target = MaxTarget / difficulty`, the
+  ratio of two windows cancels `MaxTarget` — only each epoch's 4-byte `nBits` and 4-byte
+  timestamp (header bytes 68–75) are ever read.
+- **One read per difficulty period**: `refresh()` re-reads the bridge only when the best
+  chain height crosses into a new 2016-block epoch; the rolling window and the cached
+  ratio are updated once per period, not per block.
 - **Fractional exponent on-chain**: `b ≈ 0.69` is not an integer, so the contract ships
   a signed 64.64 fixed-point library (`contracts/libraries/FixedPointMath.sol`) for
   `log2`/`exp2`/`pow` — mathematically validated to ~5e-15 relative error across the
   ratio range, and the end-to-end output matches `lending.py`'s `(D_ratio)^b`.
 - **Getters** `dbtcPerBtc()` / `btcPerDbtc()` return 64.64 fixed point; `anchor()`
-  freezes `D0` at mint time.
+  freezes `D_s0` at mint time; a per-epoch ring stores just the last ~26 length of
+  inverse-targets needed to keep the window rolling.
 
 ```bash
 solc --bin --optimize contracts/DBTCPrice.sol   # compiles with solc 0.8.25

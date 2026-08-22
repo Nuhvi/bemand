@@ -21,7 +21,7 @@ import pandas as pd
 WINDOWS_PERIODS = [1, 2, 4, 6, 8, 13, 20, 26, 39, 52, 78, 104]
 
 # Default smoothing window: 26 difficulty periods (≈ one year).
-DEFAULT_WINDOW = 26
+DEFAULT_WINDOW = 52
 
 # Default reference: 2010-07-18 is the first day with a nonzero price.
 DEFAULT_T0 = "2010-07-18"
@@ -85,13 +85,42 @@ def smoothed_diff(df: pd.DataFrame, window: int) -> pd.Series:
     return p.map(per_sm).reindex(df.index)
 
 
+def sliding_smoothed_diff(df: pd.DataFrame, window: int) -> pd.Series:
+    """Block-window mean of difficulty: sliding mean over trailing `window*2016`
+    blocks, one block at a time.
+
+    Each block contributes the difficulty of the period it belongs to. Because
+    difficulty is constant within a period the window advances continuously by
+    block, so it drifts smoothly across a retarget instead of jumping.
+
+    The daily series has no per-block breakdown, so each calendar day is
+    treated as 144 blocks (2016/14) of that day's difficulty; the trailing
+    block-window mean over `window*2016` blocks is computed from a
+    repeated-day cumulative sum. This mirrors the on-chain ring (which knows
+    real block heights) under the 144-blocks/day convention.
+    """
+    dif = df["difficulty"]
+    blocks_per_day = 144
+    nb = int(window * 2016)           # window length in blocks
+    reps = dif.to_numpy().repeat(blocks_per_day)   # one entry per block
+    cs = np.concatenate([[0.0], np.cumsum(reps)])  # cs[i] = sum blocks[0..i-1]
+    out = np.full(len(dif), np.nan)
+    for i in range(len(dif)):
+        end = (i + 1) * blocks_per_day - 1          # last block of day i
+        lo = end - nb + 1
+        total = cs[end + 1] - (cs[lo] if lo > 0 else 0.0)
+        denom = (end + 1) if lo <= 0 else nb
+        out[i] = total / denom
+    return pd.Series(out, index=df.index)
+
+
 def _prep_ratios(df: pd.DataFrame, window: int, t0: str) -> pd.DataFrame:
     """Return normalised log-ratios (and smoothed diff) w.r.t. t0."""
     t0_ts = pd.Timestamp(t0)
     sub = df.loc[df.index >= t0_ts].copy()
     if sub.empty:
         raise ValueError(f"t0={t0} after end of data")
-    sub["diff_sm"] = smoothed_diff(df, window).loc[sub.index]
+    sub["diff_sm"] = sliding_smoothed_diff(df, window).loc[sub.index]
     ref = sub.iloc[0]  # first sample at/after t0
     sub["lr"] = np.log(sub["price"] / ref["price"])          # relative log-price
     sub["ld"] = np.log(sub["diff_sm"] / ref["diff_sm"])      # relative log-diff

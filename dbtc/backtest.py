@@ -43,7 +43,7 @@ class ValueModel:
         self.series = self.series.sort_index()
 
 
-def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 26,
+def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 52,
                        wma_w: int = 350, a: float = FIT_A, b: float = FIT_B) -> dict[str, ValueModel]:
     """Return {name: ValueModel} for DBTC / wma(≈50w) / wma200 / spot from launch onwards.
 
@@ -57,7 +57,7 @@ def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 26,
     spot = d["price"]
 
     # DBTC: difficulty only, calibrated to the wma anchor at launch.
-    sd = analyze.smoothed_diff(df, diff_w).reindex(d.index)
+    sd = analyze.sliding_smoothed_diff(df, diff_w).reindex(d.index)
     ref_sd = sd.iloc[0]
     anchor = spot.rolling(wma_w, min_periods=1).mean().iloc[0]
     dbtc = anchor * np.exp(a) * (sd / ref_sd) ** b
@@ -152,7 +152,7 @@ def salary_cashflow(model: ValueModel, df: pd.DataFrame, launch: str,
     })
 
 
-def fit_law(df: pd.DataFrame, since: str, diff_w: int = 26) -> dict:
+def fit_law(df: pd.DataFrame, since: str, diff_w: int = 52) -> dict:
     """Fit the difficulty->price power law on data from ``since`` onwards.
 
     ``diff_w`` is the smoothing window in difficulty periods. Returns dict with
@@ -170,7 +170,7 @@ def fit_law(df: pd.DataFrame, since: str, diff_w: int = 26) -> dict:
     }
 
 
-def dbtc_series(df: pd.DataFrame, since: str, smooth: int = 26,
+def dbtc_series(df: pd.DataFrame, since: str, smooth: int = 52,
                 b: float | None = None) -> pd.Series:
     """DBTC price anchored to spot at ``since`` via difficulty^b.
 
@@ -182,11 +182,11 @@ def dbtc_series(df: pd.DataFrame, since: str, smooth: int = 26,
     spot = d["price"]
     if b is None:
         b = fit_law(df, since, smooth)["b"]
-    sd = analyze.smoothed_diff(df, smooth).reindex(d.index)
+    sd = analyze.sliding_smoothed_diff(df, smooth).reindex(d.index)
     return spot.iloc[0] * (sd / sd.iloc[0]) ** b
 
 
-def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 26, since: str = "2014-01-01",
+def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 52, since: str = "2014-01-01",
                           b: float | None = None) -> dict:
     """Merchant that prices goods in DBTC and pays USD costs monthly.
 
@@ -210,7 +210,7 @@ def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 26, since: str = "2014
     }
 
 
-def collateral_metrics(df: pd.DataFrame, smooth: int = 26, since: str = "2014-01-01",
+def collateral_metrics(df: pd.DataFrame, smooth: int = 52, since: str = "2014-01-01",
                        b: float | None = None) -> dict:
     """Collateral ratio RBTC/DBTC and backing required never to liquidate.
 
@@ -243,7 +243,7 @@ def ratio_index(df: pd.DataFrame, since: str) -> pd.Index:
 
 def run_all(df: pd.DataFrame, launch: str, n_months: int = 120,
             float_months: int = 1, b: float | None = None,
-            smooth: int = 26) -> dict:
+            smooth: int = 52) -> dict:
     """Backtest all models x scenarios, return {key: summary}."""
     models = build_value_models(df, launch, a=0.0, b=(b or FIT_B), diff_w=smooth)
     out = {}

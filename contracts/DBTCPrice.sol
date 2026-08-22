@@ -25,21 +25,23 @@ interface IBridge {
 ///
 ///     DBTC per BTC = (D_s / D_s0)^b            BTC per DBTC = 1 / (D_s / D_s0)^b
 ///
-/// where `D_s` is the mean difficulty over the trailing `window` difficulty
-/// periods (default 26, the flagship smoothing in `lending.py`), `D_s0` is
-/// that window mean frozen at the anchor, and `b` (~0.69) is the OLS-fitted
-/// exponent (see README).
+/// where `D_s` is the mean difficulty over the trailing `window * 2016` blocks
+/// (default `window` = 52 ≈ 2 years), `D_s0` is that mean frozen at the
+/// anchor, and `b` (≈0.64) is the OLS-fitted exponent (see README).
 ///
-/// Difficulty only changes once per 2016-block period, so the smoothing
-/// window advances once per period, not per block. The window is a simple ring
-/// of `window` per-epoch difficulties, each weighted equally (no block
-/// timestamps needed). Since `difficulty = MaxTarget / target`, a per-period
-/// effective difficulty is stored as `2^224 / target` (the `MaxTarget / 2^224`
-/// constant cancels in the ratio), so the contract only ever reads the compact
-/// `nBits` field of each period's first header. The price ratio is
-///     D_s/D_s0 = Σ current window / Σ anchor window
-/// and is recomputed once per period via log2/exp2 — read calls are pure
-/// storage.
+/// The window is counted **in blocks**: every block contributes the difficulty
+/// of the period it belongs to. Difficulty only changes once per 2016-block
+/// period, so within a period the window advances one block at a time and the
+/// mean drifts *smoothly* across a retarget instead of jumping. The 2016-block
+/// groups collapse: for a given `best` height the window's weighted sum needs,
+/// at most, `window + 1` period difficulties (one partial period at each end).
+/// Only each period's first-header compact `nBits` is read, and only on
+/// `refresh()` when a new epoch begins — read calls just scan the stored ring
+/// plus the bridge's best height (one light call).
+///
+/// Since `difficulty = MaxTarget / target`, a period's effective difficulty is
+/// `2^224 / target` (MaxTarget cancels in the ratio that forms the price), so
+/// the contract stores per-period `(2^224 / target)` terms.
 ///
 /// All price results are returned as signed 64.64 fixed point (value * 2**64).
 contract DBTCPrice {
@@ -48,67 +50,101 @@ contract DBTCPrice {
 
     /// Configurable; set to the RSK Bridge address in deployment.
     IBridge public immutable bridge;
-    /// Number of difficulty periods in the smoothing window (0 at deploy → 26).
+    /// Number of difficulty periods in the (block) smoothing window; 0 → 52.
     uint256 public immutable window;
+    /// Window length in blocks == window * 2016.
+    uint256 public immutable windowBlocks;
+    /// Ring size: need the newest `window` + 1 period values to cover the edge.
+    uint256 public immutable cap;
 
-    // ---- rolling window (D_s / t) ----
-    uint256[] internal ring;   // per-epoch 2^224/target, ring of `window`
-    uint256 internal head;     // index of the oldest entry once the ring is full
-    uint256 internal filled;   // entries stored so far (<= window)
-    uint256 public currentSum; // Σ over the window of per-period difficulty
-    uint256 public currentTarget; // nBits of the newest epoch read
-    uint256 public currentHeight; // first block height of the newest epoch
-    uint256 public currentEpoch;  // currentHeight / RETARGET
-    uint256 public reads;         // bridge reads so far (cache-hit metric)
+    // ---- per-period ring (most recent period at index currentPeriod) ----
+    // Slot `k % cap` holds the effective difficulty (`2^224 / target`) of the
+    // period whose first block is at height `k * 2016`.
+    uint256[] internal ring;
+    uint256 public totalPeriods;    // periods observed so far (== newest index + 1)
+    uint256 public currentTarget;   // nBits of the newest period seen
 
     // ---- anchor (D_s0), frozen once at mint ----
-    uint256 public anchorSum;    // ring sum frozen at anchor()
-    uint256 public anchorTarget; // nBits of the epoch that anchored
-    uint256 public anchorHeight; // first block height of the anchoring epoch
+    int256 public anchorWeight; // log2(anchorArea) - log2(anchorBlocks)
 
-    // ---- precomputed logs / ratio (constant between epoch changes) ----
-    int256 public anchorLog2;   // log2(anchorSum), set in anchor()
-    int256 public currentLog2;  // log2(currentSum), set in refresh()
-    int256 public currentRatio; // (D_s/D_s0)^b, recomputed once per epoch
-
-    /// OLS exponent `b` (≈ 0.69), fixed at deployment in 64.64 form.
+    /// OLS exponent `b` (≈ 0.64), fixed at deployment in 64.64 form.
     int256 public immutable exponent;
 
-    event Anchored(uint256 target, uint256 height);
-    event Retargeted(uint256 target, uint256 height, uint256 epoch);
+    event Anchored(uint256 height);
+    event Retargeted(uint256 target, uint256 period, uint256 best);
 
     error ZeroNBits();
+    error NotAnchored();
 
     /// @param bridge_   RSK Bridge address.
-    /// @param exponent_ fitted `b` as 64.64 (e.g. 0.69 * 2**64).
-    /// @param window_   smoothing window in difficulty periods; 0 → 26.
+    /// @param exponent_ fitted `b` as 64.64 (e.g. 0.64 * 2**64).
+    /// @param window_   smoothing window in difficulty periods; 0 → 52 (≈2y).
     constructor(address bridge_, int256 exponent_, uint256 window_) {
         bridge = IBridge(bridge_);
         exponent = exponent_;
-        window = window_ == 0 ? 26 : window_;
+        window = window_ == 0 ? 52 : window_;
+        windowBlocks = window * RETARGET;
+        cap = window + 2;
+        ring = new uint256[](cap);
     }
 
     // ------------------------------------------------------------------ read
-    /// Read the compact Bitcoin target (nBits) at a given chain height.
-    function readTargetAtHeight(uint256 h)
+    /// Read the compact target (nBits) of the first block of the `epoch`-th
+    /// period. Header layout: nBits[72..75] (LE uint32).
+    function readNBitsAtHeight(uint256 h)
         public
         view
         returns (uint256 compactNBits)
     {
         bytes memory header = bridge.getBtcBlockchainBlockHeaderByHeight(h);
-        // nBits occupies header bytes 72..75, serialised little-endian as uint32.
         compactNBits = uint256(uint8(header[72]))
             | (uint256(uint8(header[73])) << 8)
             | (uint256(uint8(header[74])) << 16)
             | (uint256(uint8(header[75])) << 24);
     }
 
-    /// Smoothed difficulty ratio (D_s/D_s0)^b as 64.64, cached per epoch.
-    /// Public for inspection; called by price getters.
+    /// Current smoothed difficulty sum `D_s` as (weightedSum, blockCount) over
+    /// the trailing `min(best+1, windowBlocks)` blocks, with period difficulties
+    /// from the ring. `best` is the current Bitcoin best chain height.
+    function _scanBlocks(uint256 best)
+        internal
+        view
+        returns (uint256 weighted, uint256 blockCount)
+    {
+        if (totalPeriods == 0) return (0, 0);
+        uint256 q = best / RETARGET;             // newest period index
+        uint256 off = best % RETARGET;           // blocks into period q (of newest)
+        uint256 have = best + 1;                 // total blocks mined so far
+        uint256 totalBlocks = have < windowBlocks ? have : windowBlocks;
+        uint256 remaining = totalBlocks;
+        uint256 area;
+
+        // newest period contributes `off+1` blocks (it is still open); the
+        // preceding periods contribute at most 2016 each; oldest partial at the
+        // far end trims to `remaining`.
+        for (uint256 j = 0; j < cap; ++j) {
+            if (q < j) break;                    // ring index underflows
+            uint256 idx = q - j;
+            if (idx >= totalPeriods) break;      // period not yet pushed
+            uint256 d = ring[idx % cap];
+            if (d == 0) break;
+            uint256 take = (j == 0) ? off + 1 : RETARGET;
+            if (take > remaining) take = remaining;
+            area += d * take;
+            remaining -= take;
+            if (remaining == 0) break;
+        }
+        return (area, totalBlocks);
+    }
+
+    /// Smoothed difficulty ratio (D_s/D_s0)^b as 64.64, continuous in blocks.
     function difficultyRatio() public view returns (int256) {
-        int256 r = currentRatio;
-        if (r == 0) revert ZeroNBits();
-        return r;
+        if (anchorWeight == 0) revert NotAnchored();
+        uint256 best = bridge.getBtcBlockchainBestChainHeight();
+        (uint256 area, uint256 blocks_) = _scanBlocks(best);
+        if (area == 0 || blocks_ == 0) revert NotAnchored();
+        int256 curLog = FixedPointMath.log2(area) - FixedPointMath.log2(blocks_);
+        return FixedPointMath.exp2(FixedPointMath.mul(exponent, anchorWeight - curLog));
     }
 
     /// DBTC per BTC = (D_s/D_s0)^b, 64.64.
@@ -124,58 +160,36 @@ contract DBTCPrice {
     }
 
     // -------------------------------------------------------------- mutating
-    /// Roll one period's target `t` into the ring and refresh the cached ratio.
-    function _pushEpoch(uint256 t) internal {
-        uint256 d = D_SCALE / t; // effective difficulty of this period (~ target^-1)
-        if (filled < window) {
-            ring.push(d);
-            filled++;
-            currentSum += d;
-        } else {
-            currentSum -= ring[head];
-            ring[head] = d;
-            currentSum += d;
-            head = (head + 1) % window;
-        }
-        currentLog2 = FixedPointMath.log2(currentSum);
-        // Keep the price constant until the contract is anchored.
-        if (anchorLog2 != 0) {
-            currentRatio = FixedPointMath.exp2(
-                FixedPointMath.mul(exponent, anchorLog2 - currentLog2)
-            );
-        }
-    }
-
-    /// Set the anchor to the current smoothed difficulty (D_s0).
+    /// Freeze D_s0 from the current window (anyone may anchor at mint).
     function anchor() external {
         refresh();
-        anchorSum = currentSum;
-        anchorLog2 = currentLog2;
-        anchorTarget = currentTarget;
-        anchorHeight = currentHeight;
-        // Recompute the ratio against the new anchor (= exp2(0) = 1 now).
-        currentRatio = FixedPointMath.exp2(
-            FixedPointMath.mul(exponent, anchorLog2 - currentLog2)
-        );
-        emit Anchored(anchorTarget, anchorHeight);
+        uint256 best = bridge.getBtcBlockchainBestChainHeight();
+        (uint256 area, uint256 blocks_) = _scanBlocks(best);
+        if (area == 0 || blocks_ == 0) revert NotAnchored();
+        anchorWeight = FixedPointMath.log2(area) - FixedPointMath.log2(blocks_);
+        emit Anchored(best);
     }
 
     /// Re-read the bridge only if best height has advanced into a new epoch.
+    /// Backfills every period crossed since the last refresh (so a long gap
+    /// still rebuilds the full window), one bridge read per new epoch.
     function refresh() public {
         uint256 best = bridge.getBtcBlockchainBestChainHeight();
         uint256 epoch = best / RETARGET;
-        // No progress past a retarget boundary -> cached value is current.
-        if (currentTarget != 0 && epoch <= currentEpoch) return;
+        if (totalPeriods != 0 && epoch < totalPeriods) return; // no new epoch
 
-        // The first block of the epoch carries that epoch's difficulty.
-        uint256 h = (epoch == 0 ? best : epoch * RETARGET);
-        uint256 t = readTargetAtHeight(h);
-        if (t == 0) revert ZeroNBits();
-        currentTarget = t;
-        currentHeight = h;
-        currentEpoch = epoch;
-        _pushEpoch(t);
-        reads++;
-        emit Retargeted(t, h, epoch);
+        uint256 first = totalPeriods == 0 ? 0 : totalPeriods;
+        for (uint256 e = first; e <= epoch; e++) {
+            uint256 h = e * RETARGET;             // first block of period e
+            uint256 t = readNBitsAtHeight(h);
+            if (t == 0) revert ZeroNBits();
+            uint256 d = D_SCALE / t;
+            if (d == 0) revert ZeroNBits();
+            ring[e % cap] = d;
+            currentTarget = t;
+        }
+
+        totalPeriods = epoch + 1;
+        emit Retargeted(currentTarget, epoch, best);
     }
 }

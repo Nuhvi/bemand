@@ -61,7 +61,7 @@ Fit (full-sample, best window):
 
 Now smoothing windows are measured in **difficulty periods** (2016 blocks, ~2 weeks
 each) instead of calendar days — the same unit the reference contract uses. 26 periods
-≈ 1 year.
+≈ 1 year; the flagship default is 52 periods ≈ 2 years (see below).
 
 | smoothing | corr | R² | slope b | median \|err\| |
 |-----------|------|-----|---------|----------------|
@@ -118,11 +118,13 @@ annualised volatility of all four (log scale):
 
 **The headline result:** DBTC is dramatically *smooth*. Rolling vol peaks in the
 early 2012​–2015 era at ~10–20% for all series, but after ~2018 DBTC sits reliably
-**under 5% (and often <2%)** while spot and even the 50w/200w SMAs swing 30–80%. DBTC's
-daily jumps are pegged to the 2-week-per-2016-blocks difficulty cadence, not market micro,
-so it is a genuine low-vol stable accounting unit — at the cost of trailing spot's returns.
+**at ~0.1–0.5%** (block-interpolated, `--smooth 52`) while spot and even the 50w/200w SMAs
+swing 30–80%. DBTC's daily moves stay tiny because the block-window mean drifts
+continuously — the old retarget-day step (~2.8% single-day jump) is gone — so it is a
+genuine ultra-low-vol stable accounting unit — at the cost of trailing spot's returns.
 
-Run and see: `./.venv/bin/python backtest.py --years 10` → regenerates `out/backtest/*.png`.
+Run and see: `./.venv/bin/python backtest.py --years 10` → regenerates `out/backtest/*.png`,
+and `./.venv/bin/python main.py` the analysis set.
 
 ### Merchant: a USD-priced business accepting DBTC
 
@@ -132,9 +134,9 @@ A business that passes revenue straight through (prices in USD, restocks in USD 
 has only its working-capital buffer exposed. Top panel: the $1 float's USD value. Bottom:
 cumulative wealth vs USDT baseline.
 
-Key figure: **DBTC** holds the float's max drawdown at only **−10.3%** vs **−75%** for
+Key figure: **DBTC** holds the float's max drawdown at only **0.0%** vs **−75%** for
 spot (the 50w SMA anchor sits between at −54%). A monthly-converted merchant is effectively
-neutral-to-mildly-positive, because DBTC appreciates while barely ever drawing down
+neutral-to-mildly-positive, because DBTC is monotonic since 2016 while barely ever drawing down
 (`05_float_sensitivity.png` shows bigger floats magnify both win and risk).
 
 ### Salary: a worker paid fixed DBTC/month
@@ -142,54 +144,98 @@ neutral-to-mildly-positive, because DBTC appreciates while barely ever drawing d
 ![salary panel](out/backtest/03_salary.png)
 
 A yearly-re-signing salary lands at **~1.3x USDT** — DBTC behaves like a gently-upward,
-low-vol USDT (income std ~0.4 $/mo). A fixed lead contract captures the underlying asset
+low-vol USDT (income std ~0.3 $/mo). A fixed lead contract captures the underlying asset
 appreciation, but inherits its full swings. `06_cumulative.png` collapses this to cumulative
 multiple-vs-USDT across the four model×renewal combos.
+
+### Choosing the smoothing window (block-interpolated)
+
+Since 2016 the DBTC price law uses a **block-interpolated** difficulty mean `D_s`: the
+window is `W × 2016` blocks, and within a period the window slides **one block at a time**
+(linear interpolation on the two edge periods, full interior periods) — so the price
+drifts smoothly across a retarget instead of snapping. This is what kills the old
+retarget-day jumps: the previous (period-averaged) model put **100% of daily price
+movement on retarget days** (single-day jumps up to ~2.8% at 52p); the block version has
+max daily move ≈ 0.4% and rolling 90d vol of **~0.1%**.
+
+`out/backtest/10_window_vol.png` sweeps DBTC's rolling-90d annualized volatility against
+`W` (`--smooth`, difficulty periods) with the 200wma/spot references:
+
+![vol vs smoothing window W](out/backtest/10_window_vol.png)
+
+| W (periods) | ~years | median 90d vol | DBTC price max DD | smooth-diff max DD (floor) | min spot/DBTC |
+|-------------|--------|----------------|-------------------|----------------------------|---------------|
+| 13p | 0.5 | 0.47% | −9.8% | −15.0% | 0.35 |
+| 26p | 1.0 | 0.21% | −1.0% | −1.7% | 0.37 |
+| **52p** | **2.0** | **0.12%** | **0.0%** | **0.0%** | **0.34** |
+| 78p | 3.0 | 0.09% | 0.0% | 0.0% | 0.33 |
+| 104p | 4.0 | 0.08% | 0.0% | 0.0% | 0.32 |
+
+Block interpolation flattens the story:
+
+- **Vol & floors improve monotonically with W** — at 26p DBTC's 90d vol is already *below*
+  the 200wma (0.21% vs 0.19%); at 52p+ the price has **no historical drawdown at all**
+  (worst smoothed-difficulty drawdown ≈ 0.0%), i.e. effectively monotonic. There is no
+  longer a "too big W" penalty on the difficulty side.
+- **The spot/DBTC tail is the only thing that gets worse** with W — a wider, flatter window
+  stands further above the market at a spot crash (min `spot/DBTC` falls 0.37 → 0.32), and
+  that is what sets the collateral requirement, not difficulty itself.
+
+**Recommendation: W = 52p (≈ 2 years).** It gives sub-200wma volatility (0.12% vs 0.19%),
+a fully monotonic price since 2016 (0.0% drawdown), and keeps the spot/DBTC tail at a
+tolerable 0.34. Wide enough that retarget steps wash out, narrow enough that the window
+still tracks the difficulty trend rather than a flat average.
+
+```bash
+./.venv/bin/python backtest.py          # defaults to --smooth 52 → prints the sweep + 10_window_vol.png
+```
 
 ### Collateral & liquidation (`lending.py`)
 
 The vault's liquidation trigger is **pure difficulty**: you're liquidated when smoothed
-difficulty falls to `(1/CR)^(1/b)` of its mint-time level (≈ −20% at CR=3). The worst case
-differs strongly with the smoothing window (all `W` in difficulty periods, `since 2016`):
+difficulty falls to `(1/CR)^(1/b)` of its mint-time level (≈ −18% at CR=3). With
+block-interpolated smoothing the last-since-2016 worst cases become tiny by ~2y windows:
 
 | smoothing W | worst month | worst 12-mo | months < launch | max price DD |
 |-------------|-------------|--------------|-----------------|--------------|
-| 13p | −10.4% | −4.7% | 0% | −20.2% |
-| 20p | −5.9% | −1.3% | 0% | −15.5% |
-| **26p** | **−5.3%** | **−0.6%** | **0%** | **−10.4%** |
-| **39p** | **−4.1%** | **+1.6%** | **0%** | **−9.5%** |
-| 52p | −3.6% | +3.1% | 0% | −8.4% |
+| 13p | −3.1% | +3.5% | 0% | −9.8% |
+| 26p | −0.6% | +11.0% | 0% | −1.0% |
+| **52p** | **+0.4%** | **+18.8%** | **0%** | **0.0%** |
+| 39p | 0.0% | +15.3% | 0% | 0.0% |
+| 78p | +0.7% | +24.3% | 0% | 0.0% |
 
-Wider windows smooth out the 2021/2022 drawdown (worst smoothed-difficulty drawdown from
-an ATH: −15.0% at 26p, ever shrinking as W grows). The real risk is the **spot/difficulty
-spread**: at the worst point spot/DBTC fell to 0.28× while smoothed difficulty kept climbing.
-That deviation — not difficulty itself — sets the collateral requirement:
+At 52p the smoothed-difficulty path since 2016 never draws down (monotonic), so the pure
+difficulty floor **never comes close**. The real risk is the **spot/difficulty spread**: at
+the worst point spot/DBTC fell to ≈0.34× while smoothed difficulty kept climbing. That
+deviation — not difficulty — sets the collateral requirement:
 
 ![collateral ratio over time](out/backtest/09_collateral_ts.png)
 
-Across W it looks like (`07_w_sweep.png`, `08_merchant_window.png`): every W keeps the
-worst-month drawdown above −5% at 26p+, and the never-liquidation backing is driven by how much
-*smooth* `spot/DBTC` diverges. Anchored 2016 you need `≈4.0x` backing for "never" at 26p; the
-switch is that "never" depends sensitively on the *anchor epoch*, because difficulty's
-*level* can drift relative to spot (see table + charts at `07_w_sweep.png`, `08`).
+Across W (`07_w_sweep.png`, `08_merchant_window.png`): 26p+ keeps worst-month drawdowns
+≤ ~1%, and the never-liquidation backing is driven by how much *smooth* `spot/DBTC`
+diverges. Anchored 2016 you need `≈2.9x` backing for "never" at 52p (more at 78/104p as
+the window drifts further from the 2016 anchor); the switch is that "never" depends
+sensitively on the *anchor epoch*, because difficulty's *level* can drift relative to spot
+(see table + charts at `07_w_sweep.png`, `08`).
 
-Run: `./.venv/bin/python backtest.py --since 2016-01-01 --smooth 26` — prints all metrics.
+Run: `./.venv/bin/python backtest.py --since 2016-01-01 --smooth 52` — prints all metrics.
 
 ## `lending.py` — live protocol numbers
 
-Frozen defaults: `--since 2016-01-01`, `--smooth 26` (periods), `--law-b` auto-fitted
-≈0.69, `--collat 3.0`. Once frozen, USD is never consulted at runtime; every number below
+Frozen defaults: `--since 2016-01-01`, `--smooth 52` (periods), `--law-b` auto-fitted
+≈0.64, `--collat 3.0`. Once frozen, USD is never consulted at runtime; every number below
 is difficulty arithmetic.
 
-1. **Mint** — per 1 locked BTC, `mint = (D_ratio)^b / CR`. Today ≈ **68.5 DBTC/BTC**
-   (`D_s ratio ≈ 2,229`, `b ≈ 0.691`, `CR=3`).
-2. **Liquidation** — pure-difficulty floor at `(1/CR)^(1/b) ≈ 20.4%` of mint difficulty:
-   the worst smoothed-difficulty drawdown (26p, `2021-11-15`) was −15.0%, so the floor
-   held with ~5% to spare since 2016 — *but* the thin margin is why collateral matters. The
-   `2020-03-13` spot crash was the worst *spot/DBTC* deviation (0.28 → min 0.252) → at CR=3
-   only −16% margin; at CR=2.5 it's _negative_ — the thin spot deviation is the binding tail.
+1. **Mint** — per 1 locked BTC, `mint = (D_ratio)^b / CR`. Today ≈ **62.8 DBTC/BTC**
+   (`D_s ratio ≈ 3,405`, `b ≈ 0.644`, `CR=3`).
+2. **Liquidation** — pure-difficulty floor at `(1/CR)^(1/b) ≈ 18.2%` of mint difficulty:
+   since 2016 the 52p-smoothed difficulty has **never drawn down** (monotonic), so the
+   floor is nowhere near being hit. The binding tail is the USD view: the `2020-03-13`
+   spot crash was the worst *spot/DBTC* deviation (min ≈ 0.34) → at CR=3 that leaves only
+   ~+3% margin; at CR=2.5 it's _negative_ — the thin spot deviation, not difficulty, is the
+   real risk.
 3. **USD value** — `SmoothUSD = P0 × D_ratio^b` with `P0` frozen once at the anchor
-   (P0 ≈ $383, today ≈ $78.6k), purely difficulty-driven thereafter.
+   (P0 ≈ $494, today ≈ $93k), purely difficulty-driven thereafter.
 4. **Prices** — `out/lending_price.png` shows 30-day & 12-month DBTC/USD and the
    difficulty ratio vs its floor (`./.venv/bin/python lending.py`)
 
@@ -200,33 +246,33 @@ is difficulty arithmetic.
 `contracts/DBTCPrice.sol` is a minimal, self-contained oracle that turns this whole
 thesis into on-chain arithmetic **without any external price feed**. It reads Bitcoin
 difficulty directly from the RSK Bridge (`getBtcBlockchainBestChainHeight` /
-`getBtcBlockchainBlockHeaderByHeight`), parses each epoch's compact `nBits` target,
-smooths it over difficulty periods, and prices DBTC with the fitted power law:
+`getBtcBlockchainBlockHeaderByHeight`), parses each period's first-epoch compact `nBits`
+target, and prices DBTC with the fitted power law on a *block-interpolated* mean:
 
 ```
 DBTC per BTC = (D_s / D_s0)^b        BTC per DBTC = 1 / (D_s / D_s0)^b     (CR = 1)
 ```
 
-- **It smooths exactly like the Python model.** `D_s` is the mean difficulty over the
-  trailing **`window` difficulty periods of 2016 blocks each** (default **26 ≈ 1 year**,
-  the `lending.py` flagship) — equal weight per period, matching
-  `analyze.smoothed_diff` in the Python code. Because difficulty only changes once per
-  period, the window advances one period at a time; the two implementations agree by
-  construction (same period series), so there is no calendar-vs-period skew.
-- **No full header decode and no oracle**: since `target = MaxTarget / difficulty`, the
-  ratio of two windows cancels `MaxTarget`; each period only contributes its 4-byte
-  `nBits` field (header bytes 72–75), stored as `2^224 / target` in a small ring.
-- **One read per difficulty period**: `refresh()` re-reads the bridge only when the best
-  chain height crosses into a new 2016-block epoch; the ring and the cached ratio are
-  updated once per period, not per block.
-- **Fractional exponent on-chain**: `b ≈ 0.69` is not an integer, so the contract ships
+- **It smooths exactly like the Python model** (`analyze.sliding_smoothed_diff`). `D_s` is
+  the mean difficulty over the trailing `window × 2016` **blocks** (default `window = 52`
+  ≈ 2 years), computed by *block interpolation*: the newest period counts its partial
+  blocks, the oldest period is filled to reach exactly `window × 2016`, and every interior
+  period counts a full 2016. The window slides one block at a time, so the price drifts
+  continuously and has no retarget-day jump — the same weighted-mean the Python side
+  computes, so on-chain and Python agree by construction.
+- **No full header decode and no oracle**: since `target = MaxTarget / difficulty`, each
+  period contributes `2^224 / target` (`MaxTarget` cancels in the ratio). `refresh()`
+  stores the newest period's difficulty in a small ring (`cap = window + 2`) and only
+  talks to the bridge when the best height enters a new 2016-block epoch; a long gap is
+  backfilled one read per missed epoch.
+- **Price reads are cheap**: `difficultyRatio()` needs the newest `window + 1` ring values
+  plus the bridge's `getBtcBlockchainBestChainHeight()` (the block interpolation offset),
+  then one `log2`/`exp2` pair — no per-block storage, no timestamps.
+- **Fractional exponent on-chain**: `b ≈ 0.64` is not an integer, so the contract ships
   a signed 64.64 fixed-point library (`contracts/libraries/FixedPointMath.sol`) for
-  `log2`/`exp2`/`pow`; `currentRatio` holds `(Σ window / Σ anchor)^b` and is recomputed
-  once per period, so price reads are pure storage.
+  `log2`/`exp2`/`pow`.
 - **Getters** `dbtcPerBtc()` / `btcPerDbtc()` return 64.64 fixed point; `anchor()`
-  freezes `D_s0` at mint time into `anchorSum`. The ring only needs the last `window`
-  per-epoch `nBits` values to keep the window rolling; the newest epoch is pushed when
-  it starts, and the oldest is dropped once the ring is full.
+  freezes `D_s0` at mint time (`anchorWeight = log2(area) − log2(blocks)`).
 
 ```bash
 solc --bin --optimize contracts/DBTCPrice.sol   # compiles with solc 0.8.25
@@ -234,10 +280,11 @@ solc --bin --optimize contracts/DBTCPrice.sol   # compiles with solc 0.8.25
 
 ## What this is, and what it is not
 
-- **DBTC is a stable-ish, difficulty-anchored accounting unit** — ~7× lower vol than
+- **DBTC is a stable-ish, difficulty-anchored accounting unit** — ~50–200× lower vol than
   spot since ~2016, difficulty-derived (no external price feed required to compute).
-  At 26-period smoothing the worst historical smoothed-difficulty drawdown since 2016 is
-  ~15% (2021 → 2022), so it is low-vol, not monotonic.
+  At 52-period block interpolation the smoothed difficulty since 2016 has **no drawdown**
+  (monotonic), so it is genuinely low-vol — but the *level* can still drift relative to
+  spot (see collateral tables).
 - It is **not** a get-wealthy instrument: over a bull decade margins clearly trail spot
   (`04_table.png`, `06_cumulative.png`). The pitch is *low-volatile stable pricing*, not
   alpha.
@@ -260,4 +307,5 @@ contracts/DBTCPrice.sol      # reference Rootstock oracle (diff → DBTC/BTC, se
 contracts/libraries/FixedPointMath.sol  # 64.64 fixed-point pow for the ^b law
 data/                    # cached blockchain.info JSON (auto-refreshed)
 out/*.png                # committed charts referenced by this README
+out/backtest/10_window_vol.png   # W-sweep → the 52-period default (see "Choosing the window")
 ```

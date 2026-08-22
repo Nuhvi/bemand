@@ -60,8 +60,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--since", default="2016-01-01",
                         help="anchor date for frozen constants (default 2016-01-01)")
-    parser.add_argument("--smooth", type=int, default=26,
-                        help="difficulty smoothing window in periods of 2016 blocks (recommended 26 ≈ 1 year)")
+    parser.add_argument("--smooth", type=int, default=52,
+                        help="difficulty smoothing window in periods of 2016 blocks (recommended 52 ≈ 2 years)")
     parser.add_argument("--collat", type=float, default=3.0,
                         help="collateral ratio (recommended 3.0)")
     parser.add_argument("--law-b", type=float, default=None,
@@ -80,7 +80,7 @@ def main() -> int:
     P0 = float(df["price"].iloc[anchor_idx]) * np.exp(a)
 
     d = df.loc[df.index >= pd.Timestamp(args.since)].copy()
-    sd = analyze.smoothed_diff(df, args.smooth).reindex(d.index)
+    sd = analyze.sliding_smoothed_diff(df, args.smooth).reindex(d.index)
     D0 = sd.iloc[0]
     growth = sd / D0                 # D(t)/D0, pure difficulty ratio
     smooth_per_btc = growth ** b     # DBTC/BTC = (D_ratio)^b  [CR=1]

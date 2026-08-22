@@ -259,6 +259,106 @@ def chart_merchant_window(df, since, b=0.73):
     return _save(fig, "08_merchant_window.png")
 
 
+def chart_window_vol_sweep(df, since, b, wrec: int = 52):
+    """How DBTC's rolling volatility (and the liquidation-relevant tails) vary
+    with the smoothing window W, against the 200wma (~SMA-1400) reference.
+
+    Two panels:
+      top    : rolling-90d annualized volatility of DBTC vs W (median + p90),
+               with the 200wma / spot reference lines. Median vol is flat
+               (~3-4%) for any W — no difficulty window reaches the 200wma's
+               ~0.2-0.3% (DBTC multiplies a trending ratio; the 200w spot SMA
+               sits in a range-bound market). What does respond is the tail.
+      bottom : the tails that actually govern lending — DBTC price max
+               drawdown, smoothed-difficulty max drawdown (liquidation floor)
+               and min spot/DBTC deviation. Wider W smooths the floors but
+               deepens the spot/DBTC tail.
+    """
+    ev0 = pd.Timestamp("2018-06-01")   # after the 2016 anchor warms the windows
+
+    def roll_vol(s, win=90, ann=365.25):
+        return s.pct_change().rolling(win, min_periods=45).std() * np.sqrt(ann)
+
+    # --- reference volatility (200wma ≈ SMA-1400 of spot) ---
+    spot = df["price"].loc[ev0:]
+    wma200 = spot.rolling(1400, min_periods=1400).mean().dropna()
+    w200_med = float(roll_vol(wma200).median())
+    w200_p90 = float(roll_vol(wma200).quantile(0.9))
+    spot_med = float(roll_vol(spot).median())
+
+    ws = [13, 26, 39, 52, 65, 78, 91, 104, 130, 156, 208, 260]
+    rows = []
+    for w in ws:
+        s = bt.dbtc_series(df, since, w, b).loc[ev0:]
+        v = roll_vol(s)
+        rows.append({
+            "W": w,
+            "vol_med": v.median(),
+            "vol_p90": v.quantile(0.9),
+            "price_dd": (s / s.cummax() - 1).min(),
+            "gr_dd": _smoothed_dd(df, w, since),
+            "spot_dev": float((df["price"].reindex(s.index).ffill() / s).min()),
+        })
+    R = pd.DataFrame(rows)
+    wrec = int(wrec)
+    row_rec = R.loc[R["W"] == wrec]
+    wband = (min(ws), max(ws))  # marked below
+
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(11, 9), sharex=True)
+    # top: volatility vs W
+    a1.fill_between(R["W"], R["vol_med"] * 100, R["vol_p90"] * 100,
+                    color=COLORS["dbtc"], alpha=0.18, label="DBTC p10–p90 band")
+    a1.plot(R["W"], R["vol_med"] * 100, color=COLORS["dbtc"], lw=2, marker="o",
+            label="DBTC median 90d ann. vol")
+    a1.axhline(w200_med * 100, color="#d6336c", ls="--", lw=1.4,
+               label=f"200wma SMA-1400 median vol ({w200_med*100:.2f}%)")
+    a1.axhline(w200_p90 * 100, color="#d6336c", ls=":", lw=1.2,
+               label=f"200wma p90 ({w200_p90*100:.2f}%)")
+    a1.axhline(spot_med * 100, color="#f76707", ls="--", lw=1.2,
+               label=f"spot median vol ({spot_med*100:.1f}%)")
+    a1.axvspan(39, 78, color="#7b1fa2", alpha=0.08, label="sweet spot 39–78p (1.5–3y)")
+    a1.axvline(wrec, color="k", ls=":", lw=1.4)
+    a1.annotate(f"recommended W={wrec}p ({wrec*14/365:.0f}y)",
+                xy=(wrec, row_rec["vol_med"].iloc[0] * 100),
+                xytext=(10, -22), textcoords="offset points", fontsize=9, color="k")
+    a1.set_yscale("log")
+    a1.set_ylabel("annualized vol (90d rolling, log)")
+    a1.set_title(f"DBTC rolling vol vs smoothing W — flat ~3–4% for any W; "
+                 f"200wma ≈ {w200_med*100:.2f}% (trend vs range, not window-dependent)")
+    a1.legend(fontsize=8, loc="upper right"); a1.grid(alpha=0.3, which="both")
+
+    # bottom: tail metrics vs W
+    a2.plot(R["W"], (1 + R["price_dd"]) * 100, "o-", color=COLORS["dbtc"],
+            label="DBTC price max drawdown (min%)")
+    a2.plot(R["W"], (1 + R["gr_dd"]) * 100, "o-", color="#7b1fa2",
+            label="smoothed-difficulty max drawdown (floor)")
+    a2.plot(R["W"], R["spot_dev"] * 100, "s--", color="#f76707",
+            label="min spot/DBTC (×100)")
+    a2.axvspan(39, 78, color="0.75", alpha=0.12, label="sweet spot 39–78p")
+    a2.set_yscale("log")
+    a2.set_ylabel("worst-case metric (log)")
+    a2.set_xlabel("smoothing window W (difficulty periods)")
+    a2.set_title("wide W smooths the floors but deepens the spot/DBTC tail — W≈52p balances both")
+    a2.legend(fontsize=8, loc="upper right"); a2.grid(alpha=0.3, which="both")
+
+    fig.tight_layout()
+    p = _save(fig, "10_window_vol.png")
+    print(f"\n[window vol sweep]  recommended W = {wrec}p ({wrec*14/365:.1f} yr); "
+          f"200wma med vol = {w200_med*100:.2f}% vs DBTC med = "
+          f"{row_rec['vol_med'].iloc[0]*100:.2f}% (flat ~3-4% for any W)")
+    for _, r in R.iterrows():
+        print(f"  W={int(r['W']):>4d}p  med vol={r['vol_med']*100:>6.2f}%  "
+              f"priceDD={(1+r['price_dd']):>7.1%}  smDD={(1+r['gr_dd']):>7.1%}  "
+              f"spot/DBTC min={r['spot_dev']:>5.2f}")
+    return p
+
+
+def _smoothed_dd(df, w, since):
+    sd = analyze.sliding_smoothed_diff(df, w)
+    gr = sd.loc[sd.index >= pd.Timestamp(since)]
+    return float((gr / gr.iloc[0] / (gr / gr.iloc[0]).cummax() - 1).min())
+
+
 def chart_collateral_ts(df, since, smooth=26, b=0.73):
     """Spot/DBTC collateral ratio over time, marking the binding low."""
     P = bt.dbtc_series(df, since, smooth, b)
@@ -283,8 +383,8 @@ def main() -> int:
                         help="launch date (default: today-Y years)")
     parser.add_argument("--since", default="2016-01-01",
                         help="data window used to fit & evaluate (default 2016-01-01, drops pre-2013 + 2013-15 drift)")
-    parser.add_argument("--smooth", type=int, default=26,
-                        help="difficulty smoothing window in periods of 2016 blocks (default 26 ≈ 1 year)")
+    parser.add_argument("--smooth", type=int, default=52,
+                        help="difficulty smoothing window in periods of 2016 blocks (default 52 ≈ 2 years)")
     parser.add_argument("--law-b", type=float, default=None,
                         help="override the fitted exponent b (default: auto-fit on --since)")
     parser.add_argument("--t0", default=None, help="deprecated; use --since")
@@ -346,7 +446,8 @@ def main() -> int:
              chart_cumulative(models, df, launch, n_months),
              chart_w_sweep_merchant(df, since, bs=(0.53, 0.73)),
              chart_merchant_window(df, since, b),
-             chart_collateral_ts(df, since, args.smooth, b)]
+             chart_collateral_ts(df, since, args.smooth, b),
+             chart_window_vol_sweep(df, since, b)]
     print(f"\n[charts] wrote {len(paths)} to {OUT}/")
     for p in paths:
         print(f"  {p}")

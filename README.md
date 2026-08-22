@@ -36,14 +36,84 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./.venv/bin/python backtest.py                        # 10y what-if (charts in out/backtest/)
 ./.venv/bin/python backtest.py --years 5              # 5y horizon
 ./.venv/bin/python backtest.py --launch 2016-08-01    # fixed launch date
+./.venv/bin/python backtest.py --since 2016-01-01 --smooth 270   # merchant/collateral sweeps
+./.venv/bin/python backtest.py --since 2016-01-01 --smooth 365 --law-b 0.73
 ```
 
 Outputs:
 
 - `data/*.json` — raw blockchain.info series (cached; auto-refreshed after ~22h)
 - `out/*.png` — 7 analysis charts, regenerated on every run
-- `out/backtest/*.png` — 6 backtest charts (values, merchant, salary, table, float sweep, cumulative)
+- `out/backtest/*.png` — 9 backtest charts (values, merchant, salary, table,
+  float sweep, cumulative, W-sweep merchant/collateral, merchant-window bar, collateral ratio TS)
 - terminal table of fit quality across smoothing windows (1d … 1400d)
+
+## Merchant & collateral questions (`backtest.py`)
+
+### Does a merchant with USD costs lose money accepting SmoothBTC?
+
+It depends on *how* they hold it. If they convert as soon as revenue lands
+(standard POS crypto handling), the only exposure is a small working-capital
+float (backtest: a 1-month float was **+18% over 10y** — you win, not lose, in
+a rising regime). If they price goods in SmoothBTC and convert on some
+cadence, the risk is a drawdown of the smoothed difficulty value, which since
+2014 is strikingly small:
+
+| smoothing W | worst month | worst 12-mo | months < launch | max price DD |
+|-------------|-------------|--------------|-----------------|--------------|
+| 180d | −3.5% | +4% | 0% | −11% |
+| **270d** | **−2.1%** | **+9.6%** | **0%** | **−3.2%** |
+| **365d** | **−0.7%** | **+12.6%** | **0%** | **−1.2%** |
+| 540d | −0.1% | +17.5% | 0% | −0.1% |
+
+Since 2014, **smoothed difficulty (W≥270) has a max sustained drawdown of only
+~4%** — it's essentially monotonic upward at any ≥1-year horizon. So a USD-cost
+merchant **does not lose money** on a ≥12-month view at W≈270–365: 0% of months
+are below launch parity, and the worst year is still positive. This holds
+robustly whether you anchor at 2014, 2015, or 2016.
+
+### What collateral ratio (BTC vs SmoothBTC) never gets liquidated?
+
+The honest answer: **there is no single number.** The required backing is
+dominated by the *long-run drift* between difficulty and spot, which shifts
+with the anchor date and the fitted exponent `b`:
+
+| anchor `since` | b | never-liquidation backing |
+|----------------|----|---------------------------|
+| 2016-01-01 | 0.73 | **≈2.9x** (2.3x at p1) |
+| 2015-01-01 | 0.73 | ≈4.3x (3.6x at p1) |
+| 2014-01-01 | 0.62 | ≈47x |
+| 2010-07-18 | 0.49 | essentially unbounded |
+
+Why: anchored at 2014, difficulty grew ~1000× while spot grew far less, so the
+smoothed oracle *overshoots* spot and the spot/oracle ratio collapses (0.02),
+needing astronomically high backing. Anchored at 2016 (mature market, `b≈0.73`
+fits) the two track each other and you need only **~2.9x** (`--smooth 270`).
+
+**The structural takeaway:** difficulty tracks demand *returns* well over long
+windows (R²≈0.9), but its *level* drifts relative to spot depending on the
+epoch. A liquidation trigger on raw difficulty does NOT fire in bear markets —
+the worst collateral ratio on record is **March 2020**, when spot crashed
+while miners kept hashing (difficulty kept climbing). So difficulty values the
+collateral *too high* exactly when you'd want it too low. Robust lending
+therefore needs **secure ~3x + a spot-linked floor**, or a re-anchoring
+mechanism — not a static "never liquidate" ratio. See
+`out/backtest/07_w_sweep.png`, `08_merchant_window.png`, `09_collateral_ts.png`.
+
+### Is pre-2013 too noisy?
+
+Confirmed, on both fit quality and level drift:
+
+| since | b | R² | median err |
+|-------|----|------|-----------|
+| 2010-07-18 | 0.49 | 0.94 | 55% |
+| 2013-01-01 | 0.48 | 0.85 | 57% |
+| 2014-01-01 | 0.62 | 0.89 | 44% |
+| 2016-01-01 | 0.73 | 0.90 | 33% |
+
+Pre-2013/2014 data drags the fitted exponent down (0.49→0.62) and inflates
+error (55%→44%). **Use `--since 2016-01-01` (b≈0.73) for protocol design**; the
+2014-anchored 48x collateral is an artifact of that earlier, noisier regime.
 
 ## Backtesting
 
@@ -138,9 +208,9 @@ difficulty"), not to a spot price. Liquidation thresholds must tolerate the
 
 ```
 main.py              # download → analyse → plot
-backtest.py          # "what if we launched N years ago" simulator + charts
+backtest.py          # "what if we launched N years ago" + merchant/collateral sweeps
 smoothbtc/analyze.py # load data, MA windows, OLS fit, metrics
-smoothbtc/backtest.py# value models + merchant/salary cashflow simulators
+smoothbtc/backtest.py# value models + cashflow simulators + merchant/collateral metrics
 smoothbtc/plot.py    # PNG charts (analysis)
 smoothbtc/download.py # blockchain.info fetcher with ~1-day cache
 data/out/             (generated)

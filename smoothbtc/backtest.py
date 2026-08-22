@@ -143,10 +143,99 @@ def salary_cashflow(model: ValueModel, df: pd.DataFrame, launch: str,
     })
 
 
+def fit_law(df: pd.DataFrame, since: str, diff_w: int = 30) -> dict:
+    """Fit the difficulty->price power law on data from ``since`` onwards.
+
+    Returns dict with exponent 'b', intercept 'a' (log), R^2, median relative
+    error and n. Uses the existing cross-sectional OLS in analyze.evaluate
+    with t0 = ``since``.
+    """
+    r = analyze.evaluate(df, diff_w, t0=since)
+    return {
+        "b": float(r.slope),
+        "a": float(r.intercept),
+        "r2": float(r.r_squared),
+        "mederr": float(r.median_abs_error),
+        "n": int(r.n),
+        "window": diff_w,
+    }
+
+
+def oracle_series(df: pd.DataFrame, since: str, smooth: int = 270,
+                  b: float | None = None) -> pd.Series:
+    """SmoothBTC price anchored to spot at ``since`` via difficulty^b.
+
+    Returns a daily USD series for 1 SmoothBTC from ``since`` onwards. If
+    ``b`` is None, auto-fit on the [since..end] sample.
+    """
+    d = df.loc[df.index >= pd.Timestamp(since)].copy()
+    spot = d["price"]
+    if b is None:
+        b = fit_law(df, since, smooth)["b"]
+    sd = d["difficulty"].rolling(smooth, min_periods=1).mean()
+    return spot.iloc[0] * (sd / sd.iloc[0]) ** b
+
+
+def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 270, since: str = "2014-01-01",
+                          b: float | None = None) -> dict:
+    """Merchant that prices goods in SmoothBTC and pays USD costs monthly.
+
+    Reports how exposed a fixed-Smooth-priced merchant is: worst month, worst
+    12-month, fraction of months below launch parity, and max price drawdown.
+    """
+    P = oracle_series(df, since, smooth, b)
+    m = P.resample("MS").last()
+    dd = (m / m.cummax() - 1).min()
+    below0 = float((m < m.iloc[0]).mean())
+    worst_mo = float((m / m.shift(1) - 1).min())
+    worst_12 = float((m / m.shift(12) - 1).min())
+    return {
+        "smooth": int(smooth),
+        "since": str(pd.Timestamp(since).date()),
+        "worst_month": worst_mo,
+        "worst_12m_ann": worst_12,   # 12m return, not annualised
+        "frac_below_launch": below0,
+        "max_price_drawdown": dd,
+        "end_price": float(P.iloc[-1]),
+    }
+
+
+def collateral_metrics(df: pd.DataFrame, smooth: int = 270, since: str = "2014-01-01",
+                       b: float | None = None) -> dict:
+    """Collateral ratio RBTC/SmoothBTC and backing required never to liquidate.
+
+    ratio = value(1 RBTC in USD) / value(1 SmoothBTC in USD), normalised so a
+    vault opened at ``since`` starts at 1.0. min/p1 of that ratio give the
+    collateral multiples needed so the ratio never deviates below the vault's
+    accounting baseline (1.0). Lower ratios = less backing needed.
+    """
+    P = oracle_series(df, since, smooth, b)
+    spot = df["price"].reindex(P.index).ffill()
+    ratio = spot / P
+    r0 = ratio.iloc[0]
+    rn = ratio / r0
+    return {
+        "smooth": int(smooth),
+        "since": str(pd.Timestamp(since).date()),
+        "min": float(rn.min()),
+        "p1": float(rn.quantile(0.01)),
+        "collat_never": 1.0 / float(rn.min()),
+        "collat_p1": 1.0 / float(rn.quantile(0.01)),
+        "end_ratio": float(ratio.iloc[-1]),
+        "bind_date": pd.Timestamp(rn.idxmin()).date(),
+    }
+
+
+def ratio_index(df: pd.DataFrame, since: str) -> pd.Index:
+    """Daily index from ``since`` (union of df index), sorted."""
+    return df.loc[df.index >= pd.Timestamp(since)].index
+
+
 def run_all(df: pd.DataFrame, launch: str, n_months: int = 120,
-            float_months: int = 1) -> dict:
+            float_months: int = 1, b: float | None = None,
+            smooth: int = 270) -> dict:
     """Backtest all models x scenarios, return {key: summary}."""
-    models = build_value_models(df, launch)
+    models = build_value_models(df, launch, a=0.0, b=(b or FIT_B), diff_w=smooth)
     out = {}
     for mkey, m in models.items():
         merch = merchant_cashflow(m, df, launch, n_months, float_months)

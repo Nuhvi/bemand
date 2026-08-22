@@ -5,6 +5,17 @@ difficulty. It uses difficulty as an independent, on-chain, fiat-agnostic signal
 demand. Still very much research, model-first: the repo does the numerical homework and
 every claim below is backed by a committed chart under `out/`.
 
+## Contents
+
+- [The idea](#the-idea)
+- [Raw data (since 2009)](#raw-data-since-2009)
+- [Does difficulty track relative price?](#does-difficulty-track-relative-price-analysis-mainpy)
+- [The price models (`backtest.py`)](#the-price-models-backtestpy)
+- [`lending.py` — live protocol numbers](#lendingpy--live-protocol-numbers)
+- [The reference contract (Rootstock)](#the-reference-contract-rootstock)
+- [What this is, and what it is not](#what-this-is-and-what-it-is-not)
+- [Layout](#layout)
+
 ## The idea
 
 Bitcoin's difficulty is set by the network itself (every 2016 blocks) purely from the
@@ -176,6 +187,35 @@ difficulty arithmetic.
 
 ![lending price history](out/lending_price.png)
 
+## The reference contract (Rootstock)
+
+`contracts/DBTCPrice.sol` is a minimal, self-contained oracle that turns this whole
+thesis into on-chain arithmetic **without any external price feed**. It reads Bitcoin
+difficulty directly from the RSK Bridge (`getBtcBlockchainBestChainHeight` /
+`getBtcBlockchainBlockHeaderByHeight`), parses the compact `nBits` target out of each
+header, and prices DBTC with the fitted power law:
+
+```
+DBTC per BTC = (D / D0)^b            BTC per DBTC = 1 / (D / D0)^b        (CR = 1)
+```
+
+- **No full header decode**: since `target = MaxTarget / difficulty`, the ratio
+  `D/D0 = target0/target` cancels `MaxTarget` — only the 4-byte `nBits` field
+  (header bytes 72–75) is ever touched.
+- **One read per difficulty period**: difficulty only changes every 2016 blocks, so
+  `refresh()` re-reads the bridge only when the chain height crosses into a new
+  epoch and caches that period's target (`currentEpoch`, `reads`).
+- **Fractional exponent on-chain**: `b ≈ 0.69` is not an integer, so the contract ships
+  a signed 64.64 fixed-point library (`contracts/libraries/FixedPointMath.sol`) for
+  `log2`/`exp2`/`pow` — mathematically validated to ~5e-15 relative error across the
+  ratio range, and the end-to-end output matches `lending.py`'s `(D_ratio)^b`.
+- **Getters** `dbtcPerBtc()` / `btcPerDbtc()` return 64.64 fixed point; `anchor()`
+  freezes `D0` at mint time.
+
+```bash
+solc --bin --optimize contracts/DBTCPrice.sol   # compiles with solc 0.8.25
+```
+
 ## What this is, and what it is not
 
 - **DBTC is a stable-ish, difficulty-anchored accounting unit** — ~7× lower vol than
@@ -198,6 +238,8 @@ dbtc/analyze.py     # load data, smoothing windows, OLS fit, metrics
 dbtc/backtest.py    # value models + cashflow simulators + merchant/collateral metrics
 dbtc/plot.py        # analysis charts → out/*.png
 dbtc/download.py     # blockchain.info fetcher, ~1-day cache
+contracts/DBTCPrice.sol      # reference Rootstock oracle (diff → DBTC/BTC, see above)
+contracts/libraries/FixedPointMath.sol  # 64.64 fixed-point pow for the ^b law
 data/                    # cached blockchain.info JSON (auto-refreshed)
 out/*.png                # committed charts referenced by this README
 ```

@@ -145,10 +145,10 @@ def main() -> int:
     w = (ath_dd).idxmin()
     print(f"   worst historical drawdown of the {args.smooth}d-smoothed difficulty from an ATH: "
           f"{ath_dd.min()*100:.1f}% on {w.date()}  ->  floor never triggered in backtest.")
-    # spot-linked caveat uses the actual spot/oracle deviation (from backtest).
-    dev_min = 0.375   # 2020-03-13 worst spot/oracle deviation at W=365d
+    # spot-linked caveat uses the actual spot/smoothBTC deviation (from backtest).
+    dev_min = 0.375   # 2020-03-13 worst spot/smoothBTC deviation at W=365d
     margin = dev_min * CR - 1
-    print(f"   caveat: in the USD/spot view the worst deviation was spot/oracle = {dev_min:.2f} on "
+    print(f"   caveat: in the USD/spot view the worst deviation was spot/smoothBTC = {dev_min:.2f} on "
           f"2020-03-13 (spot crashed while difficulty kept climbing); at CR={CR:.1f} that leaves a "
           f"{margin*100:+.0f}% margin above the spot-linked floor — the thin spot deviation, not "
           f"difficulty, is the real risk.")

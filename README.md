@@ -149,11 +149,11 @@ error (55%→44%). **Use `--since 2016-01-01` (b≈0.73) for protocol design**; 
 ## Backtesting
 
 `backtest.py` answers *"what if SmoothBTC launched N years ago?"*. It evaluates
-three candidate USD prices for 1 SmoothBTC (all calibrated to the SMA-350
-anchor at launch):
+Four candidate USD prices for 1 SmoothBTC (all calibrated at launch):
 
-- **oracle** — pure difficulty-derived value (the real design, no USD inputs)
-- **wma** — the accounting anchor SmoothBTC is meant to track
+- **smoothBTC** — pure difficulty-derived value (the real design, no USD inputs)
+- **wma** — the accounting anchor smoothBTC is meant to track (SMA-350 ≈ 50w)
+- **wma200** — 200-week SMA reference line (chart only)
 - **spot** — raw BTC/USD (conventional crypto payment, for reference)
 
 Each is run through two cashflow simulations, every scenario normalised to
@@ -168,15 +168,15 @@ the same USDT baseline of $1/month (1.0x = parity with USDT):
 
 ### Launching 2016-08 (10 years through today)
 
-Token prices: oracle **23.4x**, wma 146x, spot 111x (difficulty is the
+Token prices: smoothBTC **23.4x**, wma 146x, spot 111x (difficulty is the
 smoothest of the three by far: std 7.3 vs 51.7 $/mo).
 
 | scenario | vs USDT | max income DD | $/mo range |
 |---|---|---|---|
-| merchant / oracle | 1.18x | −22% (buffer) | 0.99–25.1 |
+| merchant / smoothBTC | 1.18x | −22% (buffer) | 0.99–25.1 |
 | merchant / spot | 1.82x | −75% (buffer) | 0.91–185.5 |
-| salary oracle / **yearly** | 1.21x | −60% within-year | 0.99–2.47 |
-| salary oracle / **fixed** | 11.2x | −22% of income | 0.99–25.1 |
+| salary smoothBTC / **yearly** | 1.21x | −60% within-year | 0.99–2.47 |
+| salary smoothBTC / **fixed** | 11.2x | −22% of income | 0.99–25.1 |
 | salary spot / fixed | 54.7x | −75% of income | 0.91–185.5 |
 
 Readings:
@@ -188,11 +188,11 @@ Readings:
 - **Salary depends on renewal.** A yearly re-signing contract in SmoothBTC
   lands at **~1.2x USDT** — SmoothBTC behaves like a gently-upward, low-vol
   USDT (income std 0.25 $/mo). A fixed long contract captures the asset
-  appreciation (11x oracle) but also its full swings.
+  appreciation (11x smoothBTC) but also its full swings.
 - **SmoothBTC is ~7× smoother than spot** but still trails BTC-spot on pure
   return in a bull decade. Its value is: *difficulty-derived (no trusted
   oracle), low-volatility, stablecoin-like accounting* — not max return.
-- Front-loading matters: launching near a top (2021) the oracle only does
+- Front-loading matters: launching near a top (2021) the smoothBTC only does
   ~2.9x and salary-yearly lands ~1.15x; launching near a base (2016) is the
   bull case shown above.
 
@@ -203,7 +203,7 @@ Readings:
   top multipliers (difficulty is sticky at peaks).
 - No fees, slippage, liquidation, borrowing, or the synthetic's own market
   mechanics are modelled — this is value-evenness math only.
-- The "oracle" model is anchored to the SMA-350 at launch; choosing a
+- The "smoothBTC" model is anchored to the SMA-350 at launch; choosing a
   different anchor or a different fitted exponent changes absolute price but
   not the ratio-based verdicts above (they are scale-invariant).
 

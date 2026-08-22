@@ -44,32 +44,45 @@ def _derived_series(merch: pd.DataFrame, sal: pd.DataFrame) -> tuple[pd.Series, 
 
 
 def chart_values(models: dict[str, bt.ValueModel], launch: str) -> Path:
-    fig, ax = plt.subplots(figsize=(11, 5))
+    colors = {"sbtc": "#1f9d55", "wma": "#7b1fa2", "wma200": "#e65100", "spot": "#1a73e8"}
+    fig, (ax, av) = plt.subplots(2, 1, figsize=(11, 7), sharex=True,
+                                 gridspec_kw={"height_ratios": [3, 1]})
     for mkey, m in models.items():
-        ax.plot(m.series.index, m.series, lw=1.2, label=m.name)
+        ax.plot(m.series.index, m.series, lw=1.2, label=m.name, color=colors[mkey])
     ax.set_yscale("log")
     ax.axvline(pd.Timestamp(launch), color="#000", ls="--", lw=1, label="launch")
-    ax.set_ylabel("USD per 1 SmoothBTC (log)")
-    ax.set_title("candidate USD prices for 1 SmoothBTC")
-    ax.legend(fontsize=9)
+    ax.set_ylabel("USD per 1 smoothBTC (log)")
+    ax.set_title("candidate USD prices for 1 smoothBTC")
+    ax.legend(fontsize=9, loc="upper left")
     ax.grid(alpha=0.3)
+
+    # Volatility comparison: smoothBTC (difficulty) vs the 200w SMA anchor.
+    for mkey in ("sbtc", "wma200"):
+        r = models[mkey].series.pct_change().rolling(90, min_periods=45).std() * np.sqrt(365.25)
+        av.plot(r.index, r, lw=1.1, color=colors[mkey],
+                label=f"{models[mkey].name} — 90d ann. vol")
+    av.set_yscale("log")
+    av.set_ylabel("volatility (90d window, ann., log)")
+    av.set_title("rolling volatility: smoothBTC vs wma200")
+    av.legend(fontsize=8, loc="upper left")
+    av.grid(alpha=0.3, which="both")
     return _save(fig, "01_values.png")
 
 
 def chart_merchant(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str,
                    n_months: int) -> Path:
     fig, (a1, a2) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
-    colors = {"oracle": "#1f9d55", "wma": "#7b1fa2", "spot": "#1a73e8"}
-    m = models["oracle"]
+    colors = {"sbtc": "#1f9d55", "wma": "#7b1fa2", "spot": "#1a73e8"}
+    m = models["sbtc"]
     merch = bt.merchant_cashflow(m, df, launch, n_months)
-    a1.plot(merch.index, merch["float_usd"] * 100, color=colors["oracle"], lw=1.3,
-            label="oracle ($1 float, USD value)")
+    a1.plot(merch.index, merch["float_usd"] * 100, color=colors["sbtc"], lw=1.3,
+            label="smoothBTC ($1 float, USD value)")
     a1.axhline(0, color="#bbb", lw=1.2)
     a1.set_ylabel("float value (USD cents)")
     a1.set_title("merchant accepting SmoothBTC ($1/mo revenue, $1/mo USD restock)")
     a1.legend(fontsize=8, loc="upper left"); a1.grid(alpha=0.3)
 
-    ride = {"oracle": merch}
+    ride = {"sbtc": merch}
     for k in ("spot", "wma"):
         mk = bt.merchant_cashflow(models[k], df, launch, n_months)
         ride[k] = mk
@@ -85,7 +98,7 @@ def chart_merchant(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: s
 
 def chart_salary(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str,
                  n_months: int) -> Path:
-    m_or = models["oracle"]
+    m_or = models["sbtc"]
     sal_yearly = bt.salary_cashflow(m_or, df, launch, n_months, renew=True)
     sal_fixed = bt.salary_cashflow(m_or, df, launch, n_months, renew=False)
     m_sp = models["spot"]
@@ -93,9 +106,9 @@ def chart_salary(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str
 
     fig, (a1, a2) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
     a1.plot(sal_yearly.index, sal_yearly["income_usd"], color="#1f9d55", marker="o", ms=3,
-            label="oracle, yearly re-sign")
+            label="smoothBTC, yearly re-sign")
     a1.plot(sal_fixed.index, sal_fixed["income_usd"], color="#7b1fa2", marker="o", ms=3,
-            label="oracle, fixed 10y")
+            label="smoothBTC, fixed 10y")
     a1.axhline(1.0, color="#bbb", lw=1.2, label="USDT baseline")
     a1.set_ylabel("USD received / mo")
     a1.set_title("salary: fixed SmoothBTC/month, yearly-re-sign vs fixed contract")
@@ -104,9 +117,9 @@ def chart_salary(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str
     a2.plot(sal_spot.index, sal_spot["income_usd"], color="#1a73e8", marker="o", ms=3,
             label="BTC-spot (fixed)")
     a2.plot(sal_fixed.index, sal_fixed["income_usd"], color="#7b1fa2", marker="o", ms=3,
-            label="oracle (fixed)")
+            label="smoothBTC (fixed)")
     a2.plot(sal_yearly.index, sal_yearly["income_usd"], color="#1f9d55", marker="o", ms=3,
-            label="oracle (yearly re-sign)")
+            label="smoothBTC (yearly re-sign)")
     a2.axhline(1.0, color="#bbb", lw=1.2, label="USDT")
     a2.set_xlabel("month end")
     a2.set_ylabel("USD received / mo")
@@ -117,7 +130,7 @@ def chart_salary(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str
 
 def chart_table(summaries: dict[str, dict]) -> Path:
     def short(k: str) -> str:
-        # merchant:oracle  ->  merch/oracle ...
+        # merchant:sbtc  ->  merch/smoothBTC ...
         return "/".join(k.split(":"))
     rows = [
         (short(k), f"{v['ratio_vs_usdt']:.2f}x", f"{v['max_rel_dd']*100:.0f}%",
@@ -136,11 +149,11 @@ def chart_table(summaries: dict[str, dict]) -> Path:
 
 
 def chart_float_sensitivity(df: pd.DataFrame, launch: str, n_months: int) -> Path:
-    """Merchant result vs working-capital float size (oracle and spot pricing)."""
+    """Merchant result vs working-capital float size (smoothBTC and spot pricing)."""
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.5))
     floats = [0.25, 0.5, 1.0, 2.0, 3.0, 6.0]
     models = bt.build_value_models(df, launch)
-    for mkey in ("oracle", "spot"):
+    for mkey in ("sbtc", "spot"):
         ratios, dds = [], []
         for fm in floats:
             m = models[mkey]
@@ -168,7 +181,7 @@ def chart_cumulative(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch:
                      n_months: int) -> Path:
     """Cumulative USD received vs USDT baseline, salary scenarios."""
     fig, ax = plt.subplots(figsize=(11, 5))
-    styles = [("oracle", "fixed", "#1f9d55", "-"), ("oracle", "yearly", "#388e3c", "--"),
+    styles = [("sbtc", "fixed", "#1f9d55", "-"), ("sbtc", "yearly", "#388e3c", "--"),
               ("spot", "fixed", "#1a73e8", "-"), ("spot", "yearly", "#7986cb", "--")]
     for mkey, tag, col, ls in styles:
         m = models[mkey]
@@ -206,7 +219,7 @@ def chart_w_sweep_merchant(df, since, bs=(0.53, 0.73), window="ME"):
             "o-", label=f"b={bs[0]} never")
     a4.plot(wdays, [bt.collateral_metrics(df, smooth=w, since=since, b=bs[1])["collat_never"] for w in wdays],
             "o-", label=f"b={bs[1]} never")
-    a4.set_title("collateral multiple to never liquidate (spot/oracle)"); a4.set_xscale("log"); a4.grid(alpha=0.3)
+    a4.set_title("collateral multiple to never liquidate (spot/smoothBTC)"); a4.set_xscale("log"); a4.grid(alpha=0.3)
     for ax in (a1, a2, a3, a4):
         ax.legend(fontsize=8)
     a4.set_xlabel("smoothing window W (days)")
@@ -229,8 +242,8 @@ def chart_merchant_window(df, since, b=0.73):
 
 
 def chart_collateral_ts(df, since, smooth=270, b=0.73):
-    """Spot/oracle collateral ratio over time, marking the binding low."""
-    P = bt.oracle_series(df, since, smooth, b)
+    """Spot/smoothBTC collateral ratio over time, marking the binding low."""
+    P = bt.sbtc_series(df, since, smooth, b)
     spot = df["price"].reindex(P.index).ffill()
     rn = (spot / P) / (spot.iloc[0] / P.iloc[0])
     fig, ax = plt.subplots(figsize=(11, 4.5))
@@ -239,7 +252,7 @@ def chart_collateral_ts(df, since, smooth=270, b=0.73):
     bd = rn.idxmin()
     ax.axvline(bd, color="#c62828", ls="--", lw=1.2,
                label=f"binding low {bd.date()} ({rn.min():.2f})")
-    ax.set_ylabel("collateral ratio spot/oracle (normalised)")
+    ax.set_ylabel("collateral ratio spot/smoothBTC (normalised)")
     ax.set_title(f"collateral ratio over time — need ~{1/rn.min():.1f}x to cover the floor (b={b}, W={smooth}d)")
     ax.legend(fontsize=8); ax.grid(alpha=0.3); ax.set_yscale("log")
     return _save(fig, "09_collateral_ts.png")
@@ -284,7 +297,7 @@ def main() -> int:
     print(f"\n[merchant, USD costs, W={args.smooth}d]"
           f"  worst month={mm['worst_month']*100:.1f}%  worst 12m={mm['worst_12m_ann']*100:.1f}%  "
           f"months<launch={mm['frac_below_launch']*100:.0f}%  maxDD={mm['max_price_drawdown']*100:.1f}%")
-    print(f"[collateral spot/oracle, W={args.smooth}d]"
+    print(f"[collateral spot/smoothBTC, W={args.smooth}d]"
           f"  min={cm['min']:.3f} (bind {cm['bind_date']})  p1={cm['p1']:.3f}  "
           f"need ≥{cm['collat_never']:.1f}x to never liquidate, ≥{cm['collat_p1']:.1f}x at p1")
 

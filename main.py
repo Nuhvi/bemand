@@ -1,4 +1,4 @@
-"""smooth-btc: difficulty-derived BTC price oracle analysis.
+"""smooth-btc: difficulty-derived smoothBTC price analysis.
 
 Usage:
     python main.py            # normal run (download if stale, analyze, plot)

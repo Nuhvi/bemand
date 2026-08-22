@@ -1,9 +1,10 @@
 """Backtesting: what would have happened if SmoothBTC launched N years ago?
 
-Computes three candidate values for "1 SmoothBTC" in USD:
-  * oracle  -- difficulty-derived oracle, no USD inputs, as designed
-  * wma     -- the accounting anchor SmoothBTC aims to track (SMA of spot)
-  * spot    -- raw BTC/USD for reference
+Computes four candidate values for "1 smoothBTC" in USD:
+  * smoothBTC -- difficulty-derived, no USD inputs, as designed
+  * wma       -- the accounting anchor smoothBTC aims to track (SMA of spot, ~50w)
+  * wma200    -- 200-week SMA reference line (chart only, not a scenario)
+  * spot      -- raw BTC/USD for reference
 
 Then simulates two cashflow scenarios over the chosen horizon and compares
 each against "you held USDT instead" (flat 1 USD):
@@ -44,27 +45,27 @@ class ValueModel:
 
 def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 30,
                        wma_w: int = 350, a: float = FIT_A, b: float = FIT_B) -> dict[str, ValueModel]:
-    """Return {name: ValueModel} for oracle / wma(w50) / wma200 / spot from launch onwards.
+    """Return {name: ValueModel} for smoothBTC / wma(≈50w) / wma200 / spot from launch onwards.
 
     ``wma_w`` (default 350 days ≈ 50 weeks) is the accounting-anchor SMA the
-    oracle is calibrated to. a 200-week SMA (4 * wma_w) is added as a long-run
-    reference line.
+    smoothBTC value is calibrated to. a 200-week SMA (4 * wma_w) is added as a
+    long-run reference line.
     """
     ts = pd.Timestamp(launch)
     d = df.loc[df.index >= ts].copy()
     spot = d["price"]
 
-    # Oracle: difficulty only, calibrated to the WMA anchor at launch.
+    # smoothBTC: difficulty only, calibrated to the wma anchor at launch.
     sd = d["difficulty"].rolling(diff_w, min_periods=1).mean()
     ref_sd = sd.iloc[0]
     anchor = spot.rolling(wma_w, min_periods=1).mean().iloc[0]
-    oracle = anchor * np.exp(a) * (sd / ref_sd) ** b
+    sbtc = anchor * np.exp(a) * (sd / ref_sd) ** b
 
     wma = spot.rolling(wma_w, min_periods=1).mean()
     wma200 = spot.rolling(wma_w * 4, min_periods=1).mean()
 
     return {
-        "oracle": ValueModel("oracle", oracle),
+        "sbtc": ValueModel("smoothBTC (difficulty)", sbtc),
         "wma": ValueModel("wma (350d ≈ 50w, anchor)", wma),
         "wma200": ValueModel("wma200 (1400d ≈ 200w)", wma200),
         "spot": ValueModel("spot", spot),
@@ -168,11 +169,11 @@ def fit_law(df: pd.DataFrame, since: str, diff_w: int = 30) -> dict:
     }
 
 
-def oracle_series(df: pd.DataFrame, since: str, smooth: int = 270,
-                  b: float | None = None) -> pd.Series:
-    """SmoothBTC price anchored to spot at ``since`` via difficulty^b.
+def sbtc_series(df: pd.DataFrame, since: str, smooth: int = 270,
+                b: float | None = None) -> pd.Series:
+    """smoothBTC price anchored to spot at ``since`` via difficulty^b.
 
-    Returns a daily USD series for 1 SmoothBTC from ``since`` onwards. If
+    Returns a daily USD series for 1 smoothBTC from ``since`` onwards. If
     ``b`` is None, auto-fit on the [since..end] sample.
     """
     d = df.loc[df.index >= pd.Timestamp(since)].copy()
@@ -190,7 +191,7 @@ def merchant_loss_metrics(df: pd.DataFrame, smooth: int = 270, since: str = "201
     Reports how exposed a fixed-Smooth-priced merchant is: worst month, worst
     12-month, fraction of months below launch parity, and max price drawdown.
     """
-    P = oracle_series(df, since, smooth, b)
+    P = sbtc_series(df, since, smooth, b)
     m = P.resample("MS").last()
     dd = (m / m.cummax() - 1).min()
     below0 = float((m < m.iloc[0]).mean())
@@ -216,7 +217,7 @@ def collateral_metrics(df: pd.DataFrame, smooth: int = 270, since: str = "2014-0
     collateral multiples needed so the ratio never deviates below the vault's
     accounting baseline (1.0). Lower ratios = less backing needed.
     """
-    P = oracle_series(df, since, smooth, b)
+    P = sbtc_series(df, since, smooth, b)
     spot = df["price"].reindex(P.index).ffill()
     ratio = spot / P
     r0 = ratio.iloc[0]
@@ -244,7 +245,7 @@ def run_all(df: pd.DataFrame, launch: str, n_months: int = 120,
     """Backtest all models x scenarios, return {key: summary}."""
     models = build_value_models(df, launch, a=0.0, b=(b or FIT_B), diff_w=smooth)
     out = {}
-    for mkey in ("oracle", "wma", "spot"):   # wma200 is a chart reference, not a scenario
+    for mkey in ("sbtc", "wma", "spot"):   # wma200 is a chart reference, not a scenario
         m = models[mkey]
         merch = merchant_cashflow(m, df, launch, n_months, float_months)
         out[f"merchant:{mkey}"] = summary(merch, f"merchant:{mkey}")

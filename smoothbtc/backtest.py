@@ -44,7 +44,12 @@ class ValueModel:
 
 def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 30,
                        wma_w: int = 350, a: float = FIT_A, b: float = FIT_B) -> dict[str, ValueModel]:
-    """Return {name: ValueModel} for oracle / wma / spot from launch onwards."""
+    """Return {name: ValueModel} for oracle / wma(w50) / wma200 / spot from launch onwards.
+
+    ``wma_w`` (default 350 days ≈ 50 weeks) is the accounting-anchor SMA the
+    oracle is calibrated to. a 200-week SMA (4 * wma_w) is added as a long-run
+    reference line.
+    """
     ts = pd.Timestamp(launch)
     d = df.loc[df.index >= ts].copy()
     spot = d["price"]
@@ -56,10 +61,12 @@ def build_value_models(df: pd.DataFrame, launch: str, diff_w: int = 30,
     oracle = anchor * np.exp(a) * (sd / ref_sd) ** b
 
     wma = spot.rolling(wma_w, min_periods=1).mean()
+    wma200 = spot.rolling(wma_w * 4, min_periods=1).mean()
 
     return {
         "oracle": ValueModel("oracle", oracle),
-        "wma": ValueModel("wma", wma),
+        "wma": ValueModel("wma (350d ≈ 50w, anchor)", wma),
+        "wma200": ValueModel("wma200 (1400d ≈ 200w)", wma200),
         "spot": ValueModel("spot", spot),
     }
 
@@ -237,7 +244,8 @@ def run_all(df: pd.DataFrame, launch: str, n_months: int = 120,
     """Backtest all models x scenarios, return {key: summary}."""
     models = build_value_models(df, launch, a=0.0, b=(b or FIT_B), diff_w=smooth)
     out = {}
-    for mkey, m in models.items():
+    for mkey in ("oracle", "wma", "spot"):   # wma200 is a chart reference, not a scenario
+        m = models[mkey]
         merch = merchant_cashflow(m, df, launch, n_months, float_months)
         out[f"merchant:{mkey}"] = summary(merch, f"merchant:{mkey}")
         for renew, tag in ((False, "fixed"), (True, "yearly")):

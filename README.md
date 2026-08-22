@@ -38,6 +38,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./.venv/bin/python backtest.py --launch 2016-08-01    # fixed launch date
 ./.venv/bin/python backtest.py --since 2016-01-01 --smooth 270   # merchant/collateral sweeps
 ./.venv/bin/python backtest.py --since 2016-01-01 --smooth 365 --law-b 0.73
+./.venv/bin/python lending.py                    # live: mint / liquidation / USD value / prices
+./.venv/bin/python lending.py --collat 2.5       # try a looser collateral ratio
 ```
 
 Outputs:
@@ -46,7 +48,36 @@ Outputs:
 - `out/*.png` — 7 analysis charts, regenerated on every run
 - `out/backtest/*.png` — 9 backtest charts (values, merchant, salary, table,
   float sweep, cumulative, W-sweep merchant/collateral, merchant-window bar, collateral ratio TS)
+- `out/lending_price.png` — 30d + 12m SmoothBTC/USD prices and vault-health history (`lending.py`)
 - terminal table of fit quality across smoothing windows (1d … 1400d)
+
+## Interactive lending tool (`lending.py`)
+
+Run `./.venv/bin/python lending.py`. The protocol parameters are fitted **once**
+and then frozen (USD is never consulted at runtime).
+
+Frozen constants (defaults): `--since 2016-01-01`, `--smooth 365` (~1 year),
+`--law-b` auto-fitted (≈0.69 at W=365), collateral `--collat 3.0`.
+
+1. **Mint** — per 1 BTC locked, `mint = (D_ratio)^b / CR` where
+   `D_ratio = D_s(t)/D_s(t0)`, `b, CR` frozen. Today that's `1340^0.693 / 3 ≈
+   **48.9 SmoothBTC / BTC** (roughly what you can borrow before — the count
+   grows as difficulty rises, `∝ ratio^b`).
+2. **Liquidation** — pure-difficulty, USD-free: you're liquidated when smoothed
+   difficulty falls to `(1/CR)^(1/b)` of its level at your mint
+   (≈ 20.5% at CR=3). The worst historical drawdown of the 365d-smoothed
+   difficulty from an ATH is ~ −2%, so this floor has never been close. But the
+   `2020-03-13` spot crash (difficulty kept climbing) was the worst *spot/oracle*
+   deviation (0.375); at CR=3 that leaves only +12% margin, at CR=2.5 it's −6%.
+3. **USD value** — `smooth_usd = P0 × D_ratio^b` with `P0 = spot_at_anchor ×
+   exp(a)` frozen once (≈ $629 today at the default anchor). So the USD price
+   still lives, but it's a frozen calibration times pure difficulty.
+4. **Prices** — 30-day and 12-month SmoothBTC/USD history plus the difficulty
+   ratio vs its liquidation floor, saved to `out/lending_price.png`.
+
+The USD-free minting is the key difference vs earlier iterations: once `P0`,
+`b`, `CR` are frozen, the *lending* math is purely difficulty — no further USD
+reads.
 
 ## Merchant & collateral questions (`backtest.py`)
 
@@ -209,6 +240,7 @@ difficulty"), not to a spot price. Liquidation thresholds must tolerate the
 ```
 main.py              # download → analyse → plot
 backtest.py          # "what if we launched N years ago" + merchant/collateral sweeps
+lending.py           # live: mint / liquidation / USD value / price history
 smoothbtc/analyze.py # load data, MA windows, OLS fit, metrics
 smoothbtc/backtest.py# value models + cashflow simulators + merchant/collateral metrics
 smoothbtc/plot.py    # PNG charts (analysis)

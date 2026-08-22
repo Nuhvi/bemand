@@ -26,7 +26,7 @@ interface IBridge {
 ///     DBTC per BTC = (D_s / D_s0)^b            BTC per DBTC = 1 / (D_s / D_s0)^b
 ///
 /// where `D_s` is the mean difficulty over the trailing `window * 2016` blocks
-/// (default `window` = 52 ≈ 2 years), `D_s0` is that mean frozen at the
+/// (default `window` = 26 ≈ 1 year), `D_s0` is that mean frozen at the
 /// anchor, and `b` (≈0.64) is the OLS-fitted exponent (see README).
 ///
 /// The window is counted **in blocks**: every block contributes the difficulty
@@ -50,7 +50,7 @@ contract DBTCPrice {
 
     /// Configurable; set to the RSK Bridge address in deployment.
     IBridge public immutable bridge;
-    /// Number of difficulty periods in the (block) smoothing window; 0 → 52.
+    /// Number of difficulty periods in the (block) smoothing window; 0 → 26.
     uint256 public immutable window;
     /// Window length in blocks == window * 2016.
     uint256 public immutable windowBlocks;
@@ -78,11 +78,11 @@ contract DBTCPrice {
 
     /// @param bridge_   RSK Bridge address.
     /// @param exponent_ fitted `b` as 64.64 (e.g. 0.64 * 2**64).
-    /// @param window_   smoothing window in difficulty periods; 0 → 52 (≈2y).
+    /// @param window_   smoothing window in difficulty periods; 0 → 26 (≈1y).
     constructor(address bridge_, int256 exponent_, uint256 window_) {
         bridge = IBridge(bridge_);
         exponent = exponent_;
-        window = window_ == 0 ? 52 : window_;
+        window = window_ == 0 ? 26 : window_;
         windowBlocks = window * RETARGET;
         cap = window + 2;
         ring = new uint256[](cap);

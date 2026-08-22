@@ -21,7 +21,7 @@ import pandas as pd
 WINDOWS_PERIODS = [1, 2, 4, 6, 8, 13, 20, 26, 39, 52, 78, 104]
 
 # Default smoothing window: 26 difficulty periods (≈ one year).
-DEFAULT_WINDOW = 52
+DEFAULT_WINDOW = 26
 
 # Default reference: 2010-07-18 is the first day with a nonzero price.
 DEFAULT_T0 = "2010-07-18"

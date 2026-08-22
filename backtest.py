@@ -259,7 +259,7 @@ def chart_merchant_window(df, since, b=0.73):
     return _save(fig, "08_merchant_window.png")
 
 
-def chart_window_vol_sweep(df, since, b, wrec: int = 52):
+def chart_window_vol_sweep(df, since, b, wrec: int = 26):
     """How DBTC's rolling volatility (and the liquidation-relevant tails) vary
     with the smoothing window W, against the 200wma (~SMA-1400) reference.
 
@@ -323,7 +323,7 @@ def chart_window_vol_sweep(df, since, b, wrec: int = 52):
                 xytext=(10, -22), textcoords="offset points", fontsize=9, color="k")
     a1.set_yscale("log")
     a1.set_ylabel("annualized vol (90d rolling, log)")
-    a1.set_title(f"DBTC rolling vol vs smoothing W — flat ~3–4% for any W; "
+    a1.set_title(f"DBTC rolling vol vs smoothing W — flat ~0.1–0.5% for any W; "
                  f"200wma ≈ {w200_med*100:.2f}% (trend vs range, not window-dependent)")
     a1.legend(fontsize=8, loc="upper right"); a1.grid(alpha=0.3, which="both")
 
@@ -338,14 +338,14 @@ def chart_window_vol_sweep(df, since, b, wrec: int = 52):
     a2.set_yscale("log")
     a2.set_ylabel("worst-case metric (log)")
     a2.set_xlabel("smoothing window W (difficulty periods)")
-    a2.set_title("wide W smooths the floors but deepens the spot/DBTC tail — W≈52p balances both")
+    a2.set_title("wide W smooths the floors but deepens the spot/DBTC tail — W≈26p balances both")
     a2.legend(fontsize=8, loc="upper right"); a2.grid(alpha=0.3, which="both")
 
     fig.tight_layout()
     p = _save(fig, "10_window_vol.png")
     print(f"\n[window vol sweep]  recommended W = {wrec}p ({wrec*14/365:.1f} yr); "
           f"200wma med vol = {w200_med*100:.2f}% vs DBTC med = "
-          f"{row_rec['vol_med'].iloc[0]*100:.2f}% (flat ~3-4% for any W)")
+          f"{row_rec['vol_med'].iloc[0]*100:.2f}% (flat ~0.1-0.5% for any W)")
     for _, r in R.iterrows():
         print(f"  W={int(r['W']):>4d}p  med vol={r['vol_med']*100:>6.2f}%  "
               f"priceDD={(1+r['price_dd']):>7.1%}  smDD={(1+r['gr_dd']):>7.1%}  "
@@ -383,8 +383,8 @@ def main() -> int:
                         help="launch date (default: today-Y years)")
     parser.add_argument("--since", default="2016-01-01",
                         help="data window used to fit & evaluate (default 2016-01-01, drops pre-2013 + 2013-15 drift)")
-    parser.add_argument("--smooth", type=int, default=52,
-                        help="difficulty smoothing window in periods of 2016 blocks (default 52 ≈ 2 years)")
+    parser.add_argument("--smooth", type=int, default=26,
+                        help="difficulty smoothing window in periods of 2016 blocks (default 26 ≈ 1 year)")
     parser.add_argument("--law-b", type=float, default=None,
                         help="override the fitted exponent b (default: auto-fit on --since)")
     parser.add_argument("--t0", default=None, help="deprecated; use --since")

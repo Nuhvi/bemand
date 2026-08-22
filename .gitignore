@@ -1,3 +1,7 @@
 /target
-/out
 /.venv
+
+# chart outputs are committed so the README can reference them
+/out/*
+!/out/backtest/
+!/out/**/*.png

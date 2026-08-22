@@ -56,14 +56,14 @@ def chart_values(models: dict[str, bt.ValueModel], launch: str) -> Path:
     ax.legend(fontsize=9, loc="upper left")
     ax.grid(alpha=0.3)
 
-    # Volatility comparison: smoothBTC (difficulty) vs the 200w SMA anchor.
-    for mkey in ("sbtc", "wma200"):
+    # Volatility comparison across the candidate USD prices.
+    for mkey in ("sbtc", "wma", "wma200", "spot"):
         r = models[mkey].series.pct_change().rolling(90, min_periods=45).std() * np.sqrt(365.25)
         av.plot(r.index, r, lw=1.1, color=colors[mkey],
                 label=f"{models[mkey].name} — 90d ann. vol")
     av.set_yscale("log")
     av.set_ylabel("volatility (90d window, ann., log)")
-    av.set_title("rolling volatility: smoothBTC vs wma200")
+    av.set_title("rolling volatility: all models")
     av.legend(fontsize=8, loc="upper left")
     av.grid(alpha=0.3, which="both")
     return _save(fig, "01_values.png")

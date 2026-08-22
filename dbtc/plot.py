@@ -28,7 +28,7 @@ def _save(fig, name: str) -> Path:
 
 def chart_raw(df: pd.DataFrame) -> Path:
     fig, (a1, a2) = plt.subplots(2, 1, sharex=True, figsize=(11, 8))
-    a2.plot(df.index, df["difficulty"], color=COLORS["sbtc"], lw=0.9)
+    a2.plot(df.index, df["difficulty"], color=COLORS["dbtc"], lw=0.9)
     a2.set_yscale("log")
     a2.set_ylabel("network difficulty (log)")
     a2.set_title("raw data (since 2009)")
@@ -49,7 +49,7 @@ def chart_smoothed_vs_price(df: pd.DataFrame, best_w: int, t0: str) -> Path:
     sub = analyze._prep_ratios(df, best_w, t0)
     fig, ax = plt.subplots(figsize=(11, 5))
     ax.plot(sub.index, sub["lr"], color=COLORS["spot"], lw=1.1, label="ln(price/price_t0)")
-    ax.plot(sub.index, sub["ld"], color=COLORS["sbtc"], lw=1.1, label=f"ln(diff_sm{best_w}/diff_sm{best_w}_t0)")
+    ax.plot(sub.index, sub["ld"], color=COLORS["dbtc"], lw=1.1, label=f"ln(diff_sm{best_w}/diff_sm{best_w}_t0)")
     ax.legend(loc="upper left")
     ax.set_title(f"normalised log-ratios vs t0={t0}  (smoothing window={best_w}d)")
     ax.grid(alpha=0.3)
@@ -101,7 +101,7 @@ def chart_price_space(df: pd.DataFrame, best: analyze.WindowResult, t0: str) -> 
     pred_p = ref_p * np.exp(best.intercept + best.slope * sub["ld"])
     fig, ax = plt.subplots(figsize=(11, 5))
     ax.plot(sub.index, sub["price"], lw=1.0, color=COLORS["spot"], label="actual BTC price")
-    ax.plot(sub.index, pred_p, lw=1.0, color=COLORS["sbtc"], ls="--",
+    ax.plot(sub.index, pred_p, lw=1.0, color=COLORS["dbtc"], ls="--",
             label=f"difficulty proxy: price_t0*exp(a+b*ld), W={best.window}d (a={best.intercept:.2f}, b={best.slope:.2f})")
     ax.set_yscale("log")
     ax.legend(fontsize=8, loc="upper left")
@@ -114,9 +114,9 @@ def chart_deviation(df: pd.DataFrame, best: analyze.WindowResult, t0: str) -> Pa
     """Predicted/actual price ratio over time: shows where the model over/under tracks."""
     dev = analyze.deviation_series(df, best, t0)
     fig, ax = plt.subplots(figsize=(11, 4))
-    ax.plot(dev.index, dev["dev"], lw=0.9, color=COLORS["sbtc"])
+    ax.plot(dev.index, dev["dev"], lw=0.9, color=COLORS["dbtc"])
     ax.axhline(1.0, color="#000", lw=1)
-    ax.fill_between(dev.index, dev["dev"], 1.0, alpha=0.15, color=COLORS["sbtc"])
+    ax.fill_between(dev.index, dev["dev"], 1.0, alpha=0.15, color=COLORS["dbtc"])
     q = dev["dev"].quantile([0.05, 0.5, 0.95])
     ax.set_yscale("log")
     for pct, v in q.items():

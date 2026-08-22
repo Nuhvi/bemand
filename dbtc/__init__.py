@@ -1,9 +1,9 @@
 __all__ = ["download", "analyze", "plot"]
 
-# Shared chart palette. Rule: spot is ALWAYS orange, smoothBTC/difficulty
+# Shared chart palette. Rule: spot is ALWAYS orange, DBTC/difficulty
 # ALWAYS green; the rest are fixed so every diagram uses identical colours.
 COLORS = {
-    "sbtc": "#1f9d55",   # smoothBTC (difficulty-derived)
+    "dbtc": "#1f9d55",   # DBTC (difficulty/demand-derived)
     "wma":  "#7b1fa2",   # wma SMA-350 ≈ 50w accounting anchor
     "wma200": "#d6336c", # wma200 SMA-1400 ≈ 200w reference line
     "spot": "#f76707",   # raw BTC/USD

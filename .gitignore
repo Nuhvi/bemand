@@ -1,6 +1,10 @@
 /target
 /.venv
 
+# python bytecode
+__pycache__/
+*.pyc
+
 # chart outputs are committed so the README can reference them
 /out/*
 !/out/backtest/

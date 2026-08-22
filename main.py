@@ -1,4 +1,4 @@
-"""smooth-btc: difficulty-derived smoothBTC price analysis.
+"""dbtc: difficulty-derived DBTC price analysis.
 
 Usage:
     python main.py            # normal run (download if stale, analyze, plot)
@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from smoothbtc import analyze, download, plot  # noqa: E402
+from dbtc import analyze, download, plot  # noqa: E402
 
 
 def main() -> int:

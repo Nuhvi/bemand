@@ -1,9 +1,9 @@
-"""lending.py — what can I do with SmoothBTC right now? (USD-free minting)
+"""lending.py — what can I do with DBTC right now? (USD-free minting)
 
 Design:
   * Parameters (--since, --smooth, --law-b) are fitted ONCE from history and
     then frozen. At runtime the protocol never consults USD.
-  * SmoothBTC's USD value is P0 * (D_s(t)/D_s(t0))^b, where
+  * DBTC's USD value is P0 * (D_s(t)/D_s(t0))^b, where
       D_s    = smoothed network difficulty,
       D_s(t0)= smoothed difficulty at the frozen anchor date,
       P0     = frozen USD calibrato (spot_at_since * exp(a)),
@@ -39,9 +39,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from smoothbtc import analyze  # noqa: E402
-from smoothbtc import backtest as bt  # noqa: E402
-from smoothbtc import COLORS, shade  # noqa: E402
+from dbtc import analyze  # noqa: E402
+from dbtc import backtest as bt  # noqa: E402
+from dbtc import COLORS, shade  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
 
@@ -83,7 +83,7 @@ def main() -> int:
     sd = d["difficulty"].rolling(args.smooth, min_periods=1).mean()
     D0 = sd.iloc[0]
     growth = sd / D0                 # D(t)/D0, pure difficulty ratio
-    smooth_per_btc = growth ** b     # SmoothBTC/BTC = (D_ratio)^b  [CR=1]
+    smooth_per_btc = growth ** b     # DBTC/BTC = (D_ratio)^b  [CR=1]
     btc_per_smooth = 1.0 / smooth_per_btc
     smooth_usd = P0 * growth ** b    # Smooth/USD = frozen P0 * difficulty-driven growth^b
     last = df.index.max()
@@ -122,10 +122,10 @@ def main() -> int:
 
     # ---- PRICES (both bases, shown first) ----
     print("   ============ CURRENT PRICES ============")
-    print(f"   SmoothBTC / BTC = {spb_now:.4f}          (per the difficulty law: 1 BTC = {spb_now:.2f} SmoothBTC)")
-    print(f"   BTC / SmoothBTC = {bps_now:.6f}   (same law frame)")
-    print(f"   SmoothBTC / USD = {_fmt_usd(p_now)}        (spot BTC = {_fmt_usd(spot_now)})")
-    print(f"   SmoothBTC vs spot: 1 SmoothBTC = {spot_now / p_now:.3f} spot-BTC "
+    print(f"   DBTC / BTC = {spb_now:.4f}          (per the difficulty law: 1 BTC = {spb_now:.2f} DBTC)")
+    print(f"   BTC / DBTC = {bps_now:.6f}   (same law frame)")
+    print(f"   DBTC / USD = {_fmt_usd(p_now)}        (spot BTC = {_fmt_usd(spot_now)})")
+    print(f"   DBTC vs spot: 1 DBTC = {spot_now / p_now:.3f} spot-BTC "
           f"(difficulty-law frame vs market — that gap is the protocol basis)")
     print("   ========================================")
     print()
@@ -134,7 +134,7 @@ def main() -> int:
     mint = spb_now / CR
     print("1. MINT — per 1 BTC locked (difficulty-only formula)")
     print(f"   difficulty ratio now  D_s(t)/D_s(t0) = {growth_now:,.1f}")
-    print(f"   mint  = (D_ratio)^b / CR  =  {growth_now:,.1f}^{b:.3f} / {CR:.2f}  =  {mint:.2f} SmoothBTC")
+    print(f"   mint  = (D_ratio)^b / CR  =  {growth_now:,.1f}^{b:.3f} / {CR:.2f}  =  {mint:.2f} DBTC")
     print(f"   (the count lives purely in the difficulty-law frame; the protocol basis is that "
           "difficulty-law unit, not USD)")
     print()
@@ -146,25 +146,25 @@ def main() -> int:
     w = (ath_dd).idxmin()
     print(f"   worst historical drawdown of the {args.smooth}d-smoothed difficulty from an ATH: "
           f"{ath_dd.min()*100:.1f}% on {w.date()}  ->  floor never triggered in backtest.")
-    # spot-linked caveat uses the actual spot/smoothBTC deviation (from backtest).
-    dev_min = 0.375   # 2020-03-13 worst spot/smoothBTC deviation at W=365d
+    # spot-linked caveat uses the actual spot/DBTC deviation (from backtest).
+    dev_min = 0.375   # 2020-03-13 worst spot/DBTC deviation at W=365d
     margin = dev_min * CR - 1
-    print(f"   caveat: in the USD/spot view the worst deviation was spot/smoothBTC = {dev_min:.2f} on "
+    print(f"   caveat: in the USD/spot view the worst deviation was spot/DBTC = {dev_min:.2f} on "
           f"2020-03-13 (spot crashed while difficulty kept climbing); at CR={CR:.1f} that leaves a "
           f"{margin*100:+.0f}% margin above the spot-linked floor — the thin spot deviation, not "
           f"difficulty, is the real risk.")
     print()
 
     # ---- 3. USD value ----
-    print("3. USD VALUE of SmoothBTC")
-    print(f"   today: 1 SmoothBTC = {_fmt_usd(p_now)}   (= P0 × (D_ratio)^b, frozen anchor)")
+    print("3. USD VALUE of DBTC")
+    print(f"   today: 1 DBTC = {_fmt_usd(p_now)}   (= P0 × (D_ratio)^b, frozen anchor)")
     print(f"   spot BTC = {_fmt_usd(spot_now)}   (spot/Smooth = {spot_now/p_now:.2f})")
-    print(f"   in BTC terms: 1 SmoothBTC = {1/spb_now:.6f} BTC")
+    print(f"   in BTC terms: 1 DBTC = {1/spb_now:.6f} BTC")
     print()
 
     # ---- 4. HISTORY ----
     print("4. HISTORY")
-    print(f"   {'period':<7} {'SmoothBTC/USD':>18} {'SmoothBTC/BTC':>16}   change")
+    print(f"   {'period':<7} {'DBTC/USD':>18} {'DBTC/BTC':>16}   change")
     for label, days in (("30d", 30), ("12m", 365)):
         sub_u = smooth_usd.loc[smooth_usd.index >= last - pd.Timedelta(days=days)]
         sub_b = smooth_per_btc.loc[smooth_per_btc.index >= last - pd.Timedelta(days=days)]
@@ -177,31 +177,31 @@ def main() -> int:
     # ---- charts ----
     OUT.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
-    # top row: SmoothBTC/USD 30d + 12m
+    # top row: DBTC/USD 30d + 12m
     for ax, days, title in ((axes[0, 0], 30, "last 30 days"),
                             (axes[0, 1], 365, "last 12 months")):
         sub = smooth_usd.loc[smooth_usd.index >= last - pd.Timedelta(days=days)]
-        ax.plot(sub.index, sub, color=COLORS["sbtc"], lw=1.4)
-        ax.set_ylabel("USD / SmoothBTC")
-        ax.set_title(f"SmoothBTC/USD — {title}")
+        ax.plot(sub.index, sub, color=COLORS["dbtc"], lw=1.4)
+        ax.set_ylabel("USD / DBTC")
+        ax.set_title(f"DBTC/USD — {title}")
         ax.grid(alpha=0.3)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d") if days <= 90
                                      else mdates.DateFormatter("%Y-%m"))
-    # bottom-left: SmoothBTC/BTC 12m + 30d inset shading
+    # bottom-left: DBTC/BTC 12m + 30d inset shading
     ax = axes[1, 0]
     sub = smooth_per_btc.loc[smooth_per_btc.index >= last - pd.Timedelta(days=365)]
-    ax.plot(sub.index, sub, color=shade(COLORS["sbtc"]), lw=1.4)
+    ax.plot(sub.index, sub, color=shade(COLORS["dbtc"]), lw=1.4)
     sub30 = smooth_per_btc.loc[smooth_per_btc.index >= last - pd.Timedelta(days=30)]
-    ax.fill_between(sub30.index, sub30.min(), sub30.max(), alpha=0.2, color=shade(COLORS["sbtc"]),
+    ax.fill_between(sub30.index, sub30.min(), sub30.max(), alpha=0.2, color=shade(COLORS["dbtc"]),
                     label="last 30d band")
-    ax.set_ylabel("SmoothBTC / BTC")
-    ax.set_title(f"SmoothBTC/BTC — last 12 months (now {spb_now:.2f})")
+    ax.set_ylabel("DBTC / BTC")
+    ax.set_title(f"DBTC/BTC — last 12 months (now {spb_now:.2f})")
     ax.legend(fontsize=8, loc="upper left")
     ax.grid(alpha=0.3)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     # bottom-right: difficulty ratio and liquidation floor
     ax = axes[1, 1]
-    ax.plot(growth.index, growth, color=COLORS["sbtc"], lw=1.0, label="smoothed difficulty ratio D(t)/D0")
+    ax.plot(growth.index, growth, color=COLORS["dbtc"], lw=1.0, label="smoothed difficulty ratio D(t)/D0")
     ax.axhline(growth_now * floor_ratio, color="#c62828", ls="--", lw=1.4,
                label=f"liquidation floor {floor_ratio:.2f}× of mint level")
     ax.axhline(1.0, color="#bbb", ls=":", lw=1.0, label="anchor t0 (ratio = 1)")
@@ -217,7 +217,7 @@ def main() -> int:
     lpath = OUT / "lending_price.png"
     fig.savefig(lpath, dpi=130)
     plt.close(fig)
-    print(f"[chart] SmoothBTC/USD + SmoothBTC/BTC + difficulty-ratio saved to {lpath}")
+    print(f"[chart] DBTC/USD + DBTC/BTC + difficulty-ratio saved to {lpath}")
 
     return 0
 

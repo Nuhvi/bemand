@@ -1,0 +1,233 @@
+"""Backtest CLI: run the "what if we launched N years ago" simulator.
+
+Usage:
+    python backtest.py                     # 10y horizon from today-10y
+    python backtest.py --years 5           # 5y horizon
+    python backtest.py --launch 2016-08-22 # 10y launch on a fixed date
+
+Writes summary tables to stdout and PNG charts to out/backtest/.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from smoothbtc import analyze  # noqa: E402
+from smoothbtc import backtest as bt  # noqa: E402
+
+OUT = Path(__file__).resolve().parent / "out" / "backtest"
+
+
+def _save(fig, name: str) -> Path:
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / name
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
+
+
+def _derived_series(merch: pd.DataFrame, sal: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Month-end USD value of a $1 SmoothBTC float (merchant) & salary income."""
+    return merch["float_usd"], sal["income_usd"]
+
+
+def chart_values(models: dict[str, bt.ValueModel], launch: str) -> Path:
+    fig, ax = plt.subplots(figsize=(11, 5))
+    for mkey, m in models.items():
+        ax.plot(m.series.index, m.series, lw=1.2, label=m.name)
+    ax.set_yscale("log")
+    ax.axvline(pd.Timestamp(launch), color="#000", ls="--", lw=1, label="launch")
+    ax.set_ylabel("USD per 1 SmoothBTC (log)")
+    ax.set_title("candidate USD prices for 1 SmoothBTC")
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3)
+    return _save(fig, "01_values.png")
+
+
+def chart_merchant(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str,
+                   n_months: int) -> Path:
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+    colors = {"oracle": "#1f9d55", "wma": "#7b1fa2", "spot": "#1a73e8"}
+    m = models["oracle"]
+    merch = bt.merchant_cashflow(m, df, launch, n_months)
+    a1.plot(merch.index, merch["float_usd"] * 100, color=colors["oracle"], lw=1.3,
+            label="oracle ($1 float, USD value)")
+    a1.axhline(0, color="#bbb", lw=1.2)
+    a1.set_ylabel("float value (USD cents)")
+    a1.set_title("merchant accepting SmoothBTC ($1/mo revenue, $1/mo USD restock)")
+    a1.legend(fontsize=8, loc="upper left"); a1.grid(alpha=0.3)
+
+    ride = {"oracle": merch}
+    for k in ("spot", "wma"):
+        mk = bt.merchant_cashflow(models[k], df, launch, n_months)
+        ride[k] = mk
+    for k, mk in ride.items():
+        a2.plot(mk.index, mk["wealth"], color=colors[k], lw=1.2, label=f"{k}: wealth={mk['wealth'].iloc[-1]:.0f}")
+    a2.plot(merch.index, merch["usdt_wealth"], color="#bbb", lw=1.2, label="USDT baseline")
+    a2.legend(fontsize=8, loc="upper left")
+    a2.set_ylabel("USD wealth (cum. spend + float)")
+    a2.set_title("merchant wealth by pricing model")
+    a2.grid(alpha=0.3)
+    return _save(fig, "02_merchant.png")
+
+
+def chart_salary(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str,
+                 n_months: int) -> Path:
+    m_or = models["oracle"]
+    sal_yearly = bt.salary_cashflow(m_or, df, launch, n_months, renew=True)
+    sal_fixed = bt.salary_cashflow(m_or, df, launch, n_months, renew=False)
+    m_sp = models["spot"]
+    sal_spot = bt.salary_cashflow(m_sp, df, launch, n_months, renew=False)
+
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+    a1.plot(sal_yearly.index, sal_yearly["income_usd"], color="#1f9d55", marker="o", ms=3,
+            label="oracle, yearly re-sign")
+    a1.plot(sal_fixed.index, sal_fixed["income_usd"], color="#7b1fa2", marker="o", ms=3,
+            label="oracle, fixed 10y")
+    a1.axhline(1.0, color="#bbb", lw=1.2, label="USDT baseline")
+    a1.set_ylabel("USD received / mo")
+    a1.set_title("salary: fixed SmoothBTC/month, yearly-re-sign vs fixed contract")
+    a1.legend(fontsize=8, loc="upper left"); a1.grid(alpha=0.3)
+
+    a2.plot(sal_spot.index, sal_spot["income_usd"], color="#1a73e8", marker="o", ms=3,
+            label="BTC-spot (fixed)")
+    a2.plot(sal_fixed.index, sal_fixed["income_usd"], color="#7b1fa2", marker="o", ms=3,
+            label="oracle (fixed)")
+    a2.plot(sal_yearly.index, sal_yearly["income_usd"], color="#1f9d55", marker="o", ms=3,
+            label="oracle (yearly re-sign)")
+    a2.axhline(1.0, color="#bbb", lw=1.2, label="USDT")
+    a2.set_xlabel("month end")
+    a2.set_ylabel("USD received / mo")
+    a2.set_title("candidate price models")
+    a2.legend(fontsize=8, loc="upper left"); a2.grid(alpha=0.3)
+    return _save(fig, "03_salary.png")
+
+
+def chart_table(summaries: dict[str, dict]) -> Path:
+    def short(k: str) -> str:
+        # merchant:oracle  ->  merch/oracle ...
+        return "/".join(k.split(":"))
+    rows = [
+        (short(k), f"{v['ratio_vs_usdt']:.2f}x", f"{v['max_rel_dd']*100:.0f}%",
+         f"{v['monthly_min']:.2f}", f"{v['monthly_max']:.0f}", f"{v['monthly_std']:.1f}")
+        for k, v in sorted(summaries.items())
+    ]
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.axis("off")
+    tbl = ax.table(cellText=rows,
+                   colLabels=["scenario", "vs USDT", "max DD", "min $/mo", "max $/mo", "std $/mo"],
+                   loc="center", cellLoc="center", colWidths=[0.2, 0.12, 0.12, 0.15, 0.15, 0.15])
+    tbl.auto_set_font_size(False); tbl.set_fontsize(9)
+    tbl.scale(1.4, 1.5)
+    ax.set_title("backtest summary — all USD normalised to $1/mo USDT baseline")
+    return _save(fig, "04_table.png")
+
+
+def chart_float_sensitivity(df: pd.DataFrame, launch: str, n_months: int) -> Path:
+    """Merchant result vs working-capital float size (oracle and spot pricing)."""
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.5))
+    floats = [0.25, 0.5, 1.0, 2.0, 3.0, 6.0]
+    models = bt.build_value_models(df, launch)
+    for mkey in ("oracle", "spot"):
+        ratios, dds = [], []
+        for fm in floats:
+            m = models[mkey]
+            mk = bt.merchant_cashflow(m, df, launch, n_months, float_months=fm)
+            s = bt.summary(mk, f"merchant:{mkey}")
+            ratios.append(s["ratio_vs_usdt"])
+            dds.append(s["max_rel_dd"] * 100)
+        a1.plot(floats, ratios, "o-", label=mkey)
+        a2.plot(floats, dds, "o-", label=mkey)
+    a1.axhline(1, color="#bbb", ls="--")
+    a1.set_xscale("log")
+    a1.set_xlabel("working-capital float (months of spend)")
+    a1.set_ylabel("merchant wealth vs USDT (x)")
+    a1.legend(); a1.grid(alpha=0.3)
+    a2.axhline(0, color="#bbb", ls="--")
+    a2.set_xscale("log")
+    a2.set_xlabel("working-capital float (months of spend)")
+    a2.set_ylabel("max drawdown of buffer (%)")
+    a2.legend(); a2.grid(alpha=0.3)
+    a1.set_title("merchant: bigger float magnifies both win and risk")
+    return _save(fig, "05_float_sensitivity.png")
+
+
+def chart_cumulative(models: dict[str, bt.ValueModel], df: pd.DataFrame, launch: str,
+                     n_months: int) -> Path:
+    """Cumulative USD received vs USDT baseline, salary scenarios."""
+    fig, ax = plt.subplots(figsize=(11, 5))
+    styles = [("oracle", "fixed", "#1f9d55", "-"), ("oracle", "yearly", "#388e3c", "--"),
+              ("spot", "fixed", "#1a73e8", "-"), ("spot", "yearly", "#7986cb", "--")]
+    for mkey, tag, col, ls in styles:
+        m = models[mkey]
+        sal = bt.salary_cashflow(m, df, launch, n_months, renew=(tag == "yearly"))
+        ax.plot(sal.index, sal["cumulative"] / sal["usdt_cum"], color=col, ls=ls, lw=1.4,
+                label=f"{mkey}/{tag}")
+    ax.axhline(1, color="#bbb", ls="--", label="USDT (1.0x)")
+    ax.set_ylabel("cumulative received vs USDT (multiple)")
+    ax.set_title("salary: cumulative USD vs USDT baseline (1.0x = parity)")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    return _save(fig, "06_cumulative.png")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--years", type=int, default=10)
+    parser.add_argument("--launch", default=None,
+                        help="launch date (default: today-Y years)")
+    parser.add_argument("--t0", default=analyze.DEFAULT_T0)
+    args = parser.parse_args()
+
+    df = analyze.load_data()
+    df["price"] = df["price"].ffill()
+    df = df.dropna(subset=["difficulty", "price"])
+
+    if args.launch:
+        launch = pd.Timestamp(args.launch)
+    else:
+        end = pd.Timestamp(df.index.max() - pd.Timedelta(days=1))
+        launch = end - pd.DateOffset(years=args.years)
+    launch = pd.Timestamp(launch).normalize().replace(day=1)  # month start
+    n_months = int((df.index.max() - launch).days // 30)
+
+    print(f"[backtest] launch={launch.date()}  months={n_months}  (data ends {df.index.max().date()})")
+
+    models = bt.build_value_models(df, launch)
+    for k, m in models.items():
+        print(f"  model {k:>6}: {m.series.iloc[0]:>10,.2f} -> {m.series.iloc[-1]:>12,.2f} "
+              f"USD/S-BTC ({m.series.iloc[-1]/m.series.iloc[0]:>10.1f}x)")
+
+    res = bt.run_all(df, launch, n_months)
+    for k in sorted(res):
+        v = res[k]
+        print(f"\n  {v['scenario']:<28} vs USDT={v['ratio_vs_usdt']:>6.2f}x "
+              f"maxDD={v['max_rel_dd']*100:>6.1f}%  $/mo [min/max]={v['monthly_min']:>6.2f}/{v['monthly_max']:>7.2f} "
+              f"std={v['monthly_std']:>5.2f}")
+
+    paths = [chart_values(models, launch),
+             chart_merchant(models, df, launch, n_months),
+             chart_salary(models, df, launch, n_months),
+             chart_table(res),
+             chart_float_sensitivity(df, launch, n_months),
+             chart_cumulative(models, df, launch, n_months)]
+    print(f"\n[charts] wrote {len(paths)} to {OUT}/")
+    for p in paths:
+        print(f"  {p}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

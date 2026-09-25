@@ -6,7 +6,8 @@ difficulty / BTC price / ECB FX feeds move. This script refreshes those feeds
 and rewrites the small Status block in README.md plus out/track.png — a single
 rolling-volatility chart that makes the whole point in one image: the DBTC unit
 adds almost nothing on top of whatever numeraire it is quoted in (DBTC/USD
-~0.2% vs DBTC/basket ~4%, which is simply basket/USD's own volatility).
+~0.2% vs basket/USD's own ~4%). DBTC/basket volatility is derivable from those
+two lines and is not plotted.
 
 Usage:
     python track.py                # refresh stale feeds, then update README
@@ -40,8 +41,12 @@ OUT = ROOT / "out"
 REF = "2016-01-01"                                       # reference date (normalisation point)
 STATUS_START, STATUS_END = "<!-- dbtc:status:start -->", "<!-- dbtc:status:end -->"
 VOL_WINDOW = 90
-# spot=orange · dbtc=green are the repo-wide rules; the rest are fixed too.
-LINE = {"DBTC/USD": ("#1f9d55", 1.6), "DBTC/basket": ("#2b6ca3", 1.6), "basket/USD": ("#8a93a0", 1.2)}
+WINDOWS = [7, 30, 90, 365]          # 1w / 1m / 1q / 1y — the standard finance windows
+SMOOTH = 30                         # days of moving-average smoothing on the plotted vol path
+# (color, width, linestyle). spot=orange · dbtc=green are repo rules.
+# DBTC/basket volatility is derivable from the two lines shown, so it is not plotted.
+LINE = {"DBTC/USD": ("#1f9d55", 1.4, "-"),
+        "basket/USD": ("#8a93a0", 1.2, "-")}
 
 
 def refresh(force: bool) -> None:
@@ -71,7 +76,6 @@ def load_series() -> pd.DataFrame:
         "DBTC/USD": dbtc,                                # the frozen law itself
         "BTC/USD": spot,                                 # spot, for the "now" line
         "basket/USD": fx_basket,                         # the fiat basket vs USD (units/USD)
-        "DBTC/basket": dbtc * fx_basket,                 # the unit quoted in the fiat basket
     })
     return out
 
@@ -92,18 +96,17 @@ def build_status(law: dict, w: pd.DataFrame, diff_s: str, spot_s: str) -> str:
     now = w["DBTC/USD"].iloc[-1]
     spot = w["BTC/USD"].iloc[-1]
     v_unit = annvol(w["DBTC/USD"]) * 100
-    v_bask = annvol(w["DBTC/basket"]) * 100
     v_fx = annvol(w["basket/USD"]) * 100
     return f"""\
 _Updated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC · data {diff_s} / spot {spot_s} · law set {law['calc_date']}_
 
-1 DBTC = **${now:,.0f}** · spot BTC = ${spot:,.0f} — rolling {VOL_WINDOW}-day annualised volatility:
+1 DBTC = **${now:,.0f}** · spot BTC = ${spot:,.0f} — realised volatility over the 1w/1m/3m/1y windows:
 
 ![track](out/track.png)
 
-_DBTC quoted in USD is ~**{v_unit:.2f}%** (90d) — barely a daily ripple. Quoted in the fiat basket it is ~{v_bask:.1f}%,
-which is essentially the basket's own volatility vs USD (~{v_fx:.1f}%): the unit adds almost nothing on top of
-whatever numeraire it is quoted in. The law is holding while these three lines stay close._"""
+_DBTC in USD is ~**{v_unit:.2f}%** (90d); in a basket of currencies it inherits the basket's own ~{v_fx:.1f}% vs USD —
+DBTC's volatility is not very different from the basket of currencies vs USD. The unit adds almost nothing on top of
+whatever numeraire it is quoted in._"""
 
 
 def replace_block(start: str, end: str, text: str) -> None:
@@ -118,28 +121,34 @@ def replace_block(start: str, end: str, text: str) -> None:
 
 def write_chart(law: dict, w: pd.DataFrame) -> Path:
     """Rolling annualised volatility of DBTC in USD vs in the fiat basket, against
-    the basket's own volatility vs USD — the unit adds almost nothing on top of
-    whatever it is quoted in."""
-    fig, ax = plt.subplots(figsize=(11, 4.2))
-    for k in LINE:
-        vol = w[k].pct_change().rolling(VOL_WINDOW).std() * np.sqrt(365)
-        color, lw = LINE[k]
-        ax.plot(vol.index, vol, color=color, lw=lw, label=k)
-    ax.set_yscale("log")
-    ax.axhline(0.01, color="#bbb", ls=":", lw=1)
-    for t, lab in ((pd.Timestamp(REF), "reference 2016-01-01"),
-                   (pd.Timestamp(law["calc_date"]), f"inception {law['calc_date']}")):
-        ax.axvline(t, color="#7b7f8a", ls="--", lw=1)
-        ax.annotate(lab, xy=(t, ax.get_ylim()[1]), xytext=(2, 4), textcoords="offset points",
-                    fontsize=9, color="#6b7380", ha="left", va="bottom", rotation=90)
-    ax.set_ylabel(f"rolling {VOL_WINDOW}-day annualised vol (log)")
-    ax.set_title("DBTC in USD ≈ 0.2%; in the basket ≈ basket/USD's own vol — the unit adds almost nothing")
-    ax.legend(loc="lower right", fontsize=9)
-    ax.grid(alpha=0.3, which="both")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    the basket's own volatility vs USD — one stacked panel per window (1w/1m/1q/1y),
+    so there is room to read the post-inception period. Vol lines are smoothed and
+    the y-axis cropped above 1e-4: the DBTC unit riding near the bottom vs the
+    overlapping basket lines is the whole point."""
+    fig, axes = plt.subplots(len(WINDOWS), 1, figsize=(10.5, 11.5), sharex=True, sharey=True)
+    for ax, win in zip(axes, WINDOWS):
+        for k in LINE:
+            vol = w[k].pct_change().rolling(win).std() * np.sqrt(365)
+            vol = vol.rolling(SMOOTH, min_periods=1).mean()
+            color, lw, ls = LINE[k]
+            ax.plot(vol.index, vol, color=color, lw=lw, ls=ls, label=k)
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=1e-4)
+        ax.axhline(0.01, color="#bbb", ls=":", lw=0.8)
+        for t in (pd.Timestamp(REF), pd.Timestamp(law["calc_date"])):
+            ax.axvline(t, color="#7b7f8a", ls="--", lw=1)
+        ax.set_title(f"{win}-day window  (line smoothed over {SMOOTH}d)", fontsize=11)
+        ax.legend(loc="lower left", ncol=3, fontsize=8, borderaxespad=0.6, handlelength=2.4)
+        ax.grid(alpha=0.3, which="both")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    axes[0].set_ylabel("annualised vol (log)")
+    fig.suptitle("DBTC volatility is not very different from the basket of currencies vs USD",
+                 fontsize=12, y=0.995)
+    fig.text(0.5, 0.004, "realised annualised volatility, rolling window of the given length; chart lines "
+             f"smoothed with a {SMOOTH}-day moving average", ha="center", fontsize=9, color="#6b7380")
+    fig.tight_layout(rect=(0, 0, 1, 0.985), h_pad=1.0)
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / "track.png"
-    fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
     return path

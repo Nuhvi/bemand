@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""track.py — the "Status" block + volatility chart for the README.
+"""track.py — the "Status" block + chart for the README.
 
 The difficulty->price law is frozen (fitted once, then immutable); only the
-difficulty / BTC price / ECB FX feeds move. This script refreshes those feeds
-and rewrites the small Status block in README.md plus out/track.png — a single
-rolling-volatility chart that makes the whole point in one image: the DBTC unit
-adds almost nothing on top of whatever numeraire it is quoted in (DBTC/USD
-~0.2% vs basket/USD's own ~4%). DBTC/basket volatility is derivable from those
-two lines and is not plotted.
+difficulty / BTC price / ECB FX feeds move. This script refreheras them and
+rewrites the small Status block in README.md plus out/track.png — one chart,
+two panels:
+
+  * price   — DBTC/USD vs spot BTC/USD (log, since the 2016 reference date);
+  * vol     — realised annualised volatility of DBTC/USD vs the currency basket
+              basket/USD, the standard 90-day window (log, smoothed).
 
 Usage:
     python track.py                # refresh stale feeds, then update README
@@ -40,13 +41,11 @@ README = ROOT / "README.md"
 OUT = ROOT / "out"
 REF = "2016-01-01"                                       # reference date (normalisation point)
 STATUS_START, STATUS_END = "<!-- dbtc:status:start -->", "<!-- dbtc:status:end -->"
-VOL_WINDOW = 90
-WINDOWS = [7, 30, 90, 365]          # 1w / 1m / 1q / 1y — the standard finance windows
-SMOOTH = 30                         # days of moving-average smoothing on the plotted vol path
-# (color, width, linestyle). spot=orange · dbtc=green are repo rules.
-# DBTC/basket volatility is derivable from the two lines shown, so it is not plotted.
-LINE = {"DBTC/USD": ("#1f9d55", 1.4, "-"),
-        "basket/USD": ("#8a93a0", 1.2, "-")}
+VOL_WINDOW = 90                                          # the volatility window (standard 3-month)
+SMOOTH = 30                                              # moving-average smoothing of the vol line
+# spot=orange · dbtc=green are the repo-wide rules; fiat yardstick in grey.
+PRICE = {"DBTC/USD": ("#1f9d55", 1.6, "DBTC/USD"), "BTC/USD": ("#f76707", 1.0, "spot BTC/USD")}
+VOL = {"DBTC/USD": ("#1f9d55", 1.4), "basket/USD": ("#8a93a0", 1.2)}
 
 
 def refresh(force: bool) -> None:
@@ -57,7 +56,13 @@ def refresh(force: bool) -> None:
 
 
 def load_series() -> pd.DataFrame:
-    """Daily frame since the reference date with all priced series (USD terms)."""
+    """Daily frame since the reference date with the priced series (USD terms).
+
+    The currency basket (equal-weight USD/EUR/GBP/JPY/CHF, per the frozen law)
+    is kept on its native business-day grid (weekends are NaN), since FX has no
+    weekend fixings — measuring its volatility on a forward-filled calendar grid
+    would dilute it with zero returns.
+    """
     law = frozen.load()
     df = analyze.load_data()
     df["price"] = df["price"].ffill()
@@ -67,21 +72,26 @@ def load_series() -> pd.DataFrame:
     s = df.loc[df.index >= pd.Timestamp(REF)]
     dbtc = dbtc.reindex(s.index)
     spot = s["price"]
-    fxdf = fx.load().reindex(s.index).ffill()
 
-    w = pd.Series(law["basket"])                         # currency-basket weights (sum to 1)
-    fx_basket = np.exp(sum(w[c] * np.log(fxdf[c]) for c in w.index if c != "USD"))
+    wgt = pd.Series(law["basket"])                       # currency-basket weights (sum to 1)
+    rates = json.loads((frozen.DATA_DIR / "fx.json").read_text())["rates"]
+    basket = {d: math.exp(sum(wgt[c] * math.log(rec[c]) for c in wgt.index if c != "USD"))
+              for d, rec in rates.items()}
+    basket = pd.Series(basket).sort_index()
+    basket.index = pd.to_datetime(basket.index)
+    basket = basket.loc[pd.Timestamp(REF):]              # clip: start at the reference date
 
     out = pd.DataFrame({
         "DBTC/USD": dbtc,                                # the frozen law itself
-        "BTC/USD": spot,                                 # spot, for the "now" line
-        "basket/USD": fx_basket,                         # the fiat basket vs USD (units/USD)
+        "BTC/USD": spot,                                 # spot BTC, for the price panel
+        "basket/USD": basket,                            # the fiat basket vs USD (units/USD)
     })
     return out
 
 
 def annvol(x: pd.Series, w: int = VOL_WINDOW) -> float:
-    return float(x.pct_change().rolling(w).std().iloc[-1] * math.sqrt(365))
+    rets = x.dropna().pct_change()          # each series on its own observed grid
+    return float(rets.rolling(w).std().iloc[-1] * math.sqrt(365))
 
 
 def freshness() -> tuple[str, str, str]:
@@ -96,17 +106,17 @@ def build_status(law: dict, w: pd.DataFrame, diff_s: str, spot_s: str) -> str:
     now = w["DBTC/USD"].iloc[-1]
     spot = w["BTC/USD"].iloc[-1]
     v_unit = annvol(w["DBTC/USD"]) * 100
-    v_fx = annvol(w["basket/USD"]) * 100
+    v_basket = annvol(w["basket/USD"]) * 100
     return f"""\
 _Updated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC · data {diff_s} / spot {spot_s} · law set {law['calc_date']}_
 
-1 DBTC = **${now:,.0f}** · spot BTC = ${spot:,.0f} — realised volatility over the 1w/1m/3m/1y windows:
+1 DBTC = **${now:,.0f}** · spot BTC = ${spot:,.0f}
 
 ![track](out/track.png)
 
-_DBTC in USD is ~**{v_unit:.2f}%** (90d); in a basket of currencies it inherits the basket's own ~{v_fx:.1f}% vs USD —
-DBTC's volatility is not very different from the basket of currencies vs USD. The unit adds almost nothing on top of
-whatever numeraire it is quoted in._"""
+_DBTC/USD realised volatility is ~**{v_unit:.2f}%** ({VOL_WINDOW}d) — an order of magnitude calmer than the
+basket of fiat currencies it can be quoted in (basket/USD ~{v_basket:.1f}%). The unit behaves like a near-fixed
+peg: it tracks spot's long-run level, but barely wiggles day to day._"""
 
 
 def replace_block(start: str, end: str, text: str) -> None:
@@ -120,33 +130,43 @@ def replace_block(start: str, end: str, text: str) -> None:
 
 
 def write_chart(law: dict, w: pd.DataFrame) -> Path:
-    """Rolling annualised volatility of DBTC in USD vs in the fiat basket, against
-    the basket's own volatility vs USD — one stacked panel per window (1w/1m/1q/1y),
-    so there is room to read the post-inception period. Vol lines are smoothed and
-    the y-axis cropped above 1e-4: the DBTC unit riding near the bottom vs the
-    overlapping basket lines is the whole point."""
-    fig, axes = plt.subplots(len(WINDOWS), 1, figsize=(10.5, 11.5), sharex=True, sharey=True)
-    for ax, win in zip(axes, WINDOWS):
-        for k in LINE:
-            vol = w[k].pct_change().rolling(win).std() * np.sqrt(365)
-            vol = vol.rolling(SMOOTH, min_periods=1).mean()
-            color, lw, ls = LINE[k]
-            ax.plot(vol.index, vol, color=color, lw=lw, ls=ls, label=k)
-        ax.set_yscale("log")
-        ax.set_ylim(bottom=1e-4)
-        ax.axhline(0.01, color="#bbb", ls=":", lw=0.8)
-        for t in (pd.Timestamp(REF), pd.Timestamp(law["calc_date"])):
+    """One figure, two panels: (top) the price of the unit vs spot BTC, (bottom)
+    realised volatility of DBTC/USD vs EUR/USD swept over the 1w/1m/3m/1y windows."""
+    ref_ts, inc_ts = pd.Timestamp(REF), pd.Timestamp(law["calc_date"])
+    fig, (axp, axv) = plt.subplots(2, 1, figsize=(10.5, 8.2), sharex=True, height_ratios=[1.05, 1.4])
+
+    # ---- price panel ----
+    for k, (color, lw, lab) in PRICE.items():
+        axp.plot(w[k].index, w[k], color=color, lw=lw, label=lab)
+    axp.set_yscale("log")
+    axp.set_title("price of the unit vs spot BTC (log)", fontsize=11)
+    axp.legend(loc="upper left", fontsize=9)
+    axp.grid(alpha=0.3, which="both")
+
+    # ---- volatility panel (single, standard 90-day window) ----
+    for k, (color, lw) in VOL.items():
+        vol = w[k].dropna().pct_change().rolling(VOL_WINDOW).std() * np.sqrt(365)
+        vol = vol.rolling(SMOOTH, min_periods=1).mean()
+        axv.plot(vol.index, vol, color=color, lw=lw, label=k)
+    axv.set_yscale("log")
+    axv.set_ylim(bottom=1e-4)
+    axv.axhline(0.01, color="#bbb", ls=":", lw=0.8)
+    axv.set_title(f"realised annualised volatility, {VOL_WINDOW}-day window (log; line smoothed {SMOOTH}d)",
+                  fontsize=11)
+    axv.legend(loc="lower left", fontsize=9, borderaxespad=0.6)
+
+    for ax in (axp, axv):
+        for t in (ref_ts, inc_ts):
             ax.axvline(t, color="#7b7f8a", ls="--", lw=1)
-        ax.set_title(f"{win}-day window  (line smoothed over {SMOOTH}d)", fontsize=11)
-        ax.legend(loc="lower left", ncol=3, fontsize=8, borderaxespad=0.6, handlelength=2.4)
         ax.grid(alpha=0.3, which="both")
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    axes[0].set_ylabel("annualised vol (log)")
-    fig.suptitle("DBTC volatility is not very different from the basket of currencies vs USD",
-                 fontsize=12, y=0.995)
-    fig.text(0.5, 0.004, "realised annualised volatility, rolling window of the given length; chart lines "
-             f"smoothed with a {SMOOTH}-day moving average", ha="center", fontsize=9, color="#6b7380")
-    fig.tight_layout(rect=(0, 0, 1, 0.985), h_pad=1.0)
+
+    fig.suptitle("DBTC/USD is calmer than the basket of currencies it is quoted in", fontsize=12, y=0.995)
+    fig.text(0.5, 0.012,
+             f"vertical dashed lines: reference date {REF} (law normalisation) · "
+             f"inception {law['calc_date']} (law set)",
+             ha="center", fontsize=9, color="#6b7380")
+    fig.tight_layout(rect=(0, 0.045, 1, 0.985), h_pad=0.8)
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / "track.png"
     fig.savefig(path, dpi=130)

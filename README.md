@@ -12,15 +12,15 @@ The law was fitted **once** (on the data that existed 2026-08-16) and is then im
 smoothing, reference date 2016-01-01. Only network difficulty and ECB FX move. Is it holding?
 
 <!-- dbtc:status:start -->
-_Updated 2026-09-25 12:02 UTC · data 2026-09-24 / spot 2026-09-25 · law set 2026-08-16_
+_Updated 2026-09-25 12:30 UTC · data 2026-09-24 / spot 2026-09-25 · law set 2026-08-16_
 
-1 DBTC = **$89,593** · spot BTC = $84,385 — realised volatility over the 1w/1m/3m/1y windows:
+1 DBTC = **$89,593** · spot BTC = $84,385
 
 ![track](out/track.png)
 
-_DBTC in USD is ~**0.17%** (90d); in a basket of currencies it inherits the basket's own ~4.2% vs USD —
-DBTC's volatility is not very different from the basket of currencies vs USD. The unit adds almost nothing on top of
-whatever numeraire it is quoted in._
+_DBTC/USD realised volatility is ~**0.17%** (90d) — an order of magnitude calmer than the
+basket of fiat currencies it can be quoted in (basket/USD ~4.9%). The unit behaves like a near-fixed
+peg: it tracks spot's long-run level, but barely wiggles day to day._
 <!-- dbtc:status:end -->
 
 _Regenerate with `python track.py` (`--force` re-downloads)._

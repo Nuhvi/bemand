@@ -30,11 +30,25 @@ def _cache_path(chart: str) -> Path:
     return DATA_DIR / f"{chart}.json"
 
 
-def _is_fresh(path: Path, max_age: int = MAX_AGE) -> bool:
+def _is_fresh(path: Path, max_age: int = MAX_AGE, tolerance: int = 2 * 86400) -> bool:
+    """Fresh if the file is recent AND its *last data point* is recent.
+
+    Judging freshness only by file mtime is unreliable: a fresh ``git
+    checkout`` restamps every file to "now", so a month-old cache would
+    silently pass the check. We instead read the last point's unix time and
+    require it to be within ``max_age + tolerance`` of now (tolerance covers
+    the source feeds updating daily rather than continuously).
+    """
     if not path.exists():
         return False
-    age = time.time() - path.stat().st_mtime
-    return age < max_age
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        last_x = data["values"][-1]["x"]
+    except (OSError, KeyError, IndexError, ValueError):
+        return False
+    age = time.time() - last_x
+    return age < max_age + tolerance
 
 
 def fetch_chart(chart: str, force: bool = False, max_age: int = MAX_AGE) -> dict:

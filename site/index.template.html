@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DBTC — frozen-law tracker</title>
+<style>
+  :root {
+    --dbtc:#1f9d55; --spot:#f76707;
+    --ink:#1c2330; --muted:#6b7380; --line:#dfe4ea; --card:#f7f8fa;
+    --ok:#1f9d55; --warn:#d8910b; --bad:#c62828;
+  }
+  * { box-sizing:border-box; }
+  body { font:15px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+         color:var(--ink); background:#fff; margin:0; padding:24px 28px; }
+  h1 { font-size:22px; margin:0 0 2px; }
+  .sub { color:var(--muted); font-size:13px; }
+  .statusbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:14px 0 20px; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:600; color:#fff; }
+  .badge.ok { background:var(--ok); } .badge.warn { background:var(--warn); } .badge.bad { background:var(--bad); }
+  .meta { color:var(--muted); font-size:12px; max-width:100%; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:12px; margin:4px 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 14px; }
+  .card .k { color:var(--muted); font-size:12px; } .card .v { font-size:20px; font-weight:650; }
+  .card .d { color:var(--muted); font-size:12px; }
+  .panel { border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:0 0 20px; background:var(--card); }
+  .panel h2 { font-size:15px; margin:0 0 2px; }
+  .panel .desc { color:var(--muted); font-size:12px; margin:0 0 6px; }
+  .panel .hint { color:var(--muted); font-size:12px; margin:0 0 6px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th,td { text-align:right; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  tbody tr:last-child td { border-bottom:none; }
+  .swatch { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; }
+  .chart { width:100%; height:400px; }
+  .chart.tall { height:440px; }
+  .foot { color:var(--muted); font-size:12px; margin-top:24px; line-height:1.65; }
+  code { background:#eef0f3; border-radius:4px; padding:0 4px; font-size:12px; }
+</style>
+</head>
+<body>
+
+<h1>DBTC — frozen-law tracker</h1>
+<div class="sub">DBTC = <code>P0 × (D<sub>s</sub>/D0)<sup>b</sup></code> — the difficulty→price law was frozen on
+  <span id="calc-date"></span> and is never re-fitted. Only network difficulty and FX move; the law does not.
+  <b>Charts:</b> drag/wheel to zoom, click any legend item to show or hide it.</div>
+
+<div class="statusbar">
+  <span id="verdict"></span><span id="dataage" class="meta"></span><span class="meta" id="refresh-note"></span>
+</div>
+
+<div class="cards" id="cards"></div>
+
+<div class="panel">
+  <h2>DBTC/USD — full history since the 2016 anchor <span class="meta">(log)</span></h2>
+  <div class="desc">Green = the frozen difficulty law, orange = what the market actually paid.
+    <b>Vertical dashes:</b> <b>anchor</b> (2016-01-01, where the law is normalised) and
+    <b>law frozen</b> (<span id="incep-date"></span>, where the regression was done). The shaded band is the fit window.</div>
+  <div id="c1" class="chart"></div>
+</div>
+
+<div class="panel">
+  <h2>Stability since inception — every tracked currency + basket</h2>
+  <div class="desc">Each currency is rebased to <b>1.000 at inception</b> (<span id="incep-date2"></span>).
+    Tightly clustered lines around 1.0 mean DBTC has been a stable store since the freeze; a wide fan means it has not.
+    Basket = geometric mean (equal weights). Click the legend to toggle currencies — <b>basket &amp; USD are shown by default</b>.</div>
+  <div id="c2" class="chart tall"></div>
+</div>
+
+<div class="panel">
+  <h2>Current value &amp; since-inception statistics per currency</h2>
+  <div class="desc">Drawdowns vs the running peak; “worst vs inception” is the most negative day relative to the freeze
+    day; volatility is annualised realised vol on daily log-returns.</div>
+  <div id="tbl"></div>
+</div>
+
+<div class="panel">
+  <h2>Difficulty safety — smoothed difficulty ratio vs liquidation floor</h2>
+  <div class="desc">Ratio <code>D<sub>s</sub>(t)/D0</code> vs the liquidation floor <code>(1/CR)^(1/b)</code>,
+    CR&nbsp;=&nbsp;<span id="cr"></span>. The protocol liquidates if smoothed difficulty ever fell to the floor.</div>
+  <div id="c4" class="chart"></div>
+</div>
+
+<div class="panel">
+  <h2>Frozen law</h2>
+  <div class="desc">Fitted once on the cached data that existed on <b id="calc-date2"></b>; immutable afterwards.
+    Every number on this page is recomputed from them.</div>
+  <div id="law"></div>
+</div>
+
+<div class="foot">
+  Sources: network difficulty &amp; USD spot — blockchain.info (daily, embedded at build time); FX — ECB daily reference
+  rates via frankfurter.app (fetched live in your browser when CORS allows). The page renders from embedded data
+  immediately, then refreshes sibling <code>./data/*.json</code> when served and ECB FX in the background.
+  Charts use locally-vendored ECharts (<code>./vendor/echarts.min.js</code>) — no network needed.
+  <span id="foot-built" class="meta"></span>
+</div>
+
+<script id="dbtc-bundle" type="application/json">__DBTC_BUNDLE__</script>
+<script src="vendor/echarts.min.js"></script>
+<script>
+"use strict";
+
+/* ======================================================= bundle / storage == */
+const BUNDLE = JSON.parse(document.getElementById("dbtc-bundle").textContent);
+const META = BUNDLE.meta;
+const CURR = META.currencies;                 // ["USD","EUR","GBP","JPY","CHF"]
+const BASKET = META.basket;                   // weights, sum to 1
+const INCEP = META.calc_date;                 // freeze day (stability t0)
+const ANCHOR = META.anchor;
+const CR = META.cr || 3.0;
+const P0 = META.P0, B = META.b, D0 = META.D0, SMOOTH = META.smooth;
+const COL = { USD:"#2b6ca3", EUR:"#0e4a8f", GBP:"#7b5ea7", JPY:"#b2540b", CHF:"#3f7f4f",
+              basket:"#111827", dbtc:"#1f9d55", spot:"#f76707" };
+const CURNAME = { USD:"US Dollar", EUR:"Euro", GBP:"British Pound", JPY:"Japanese Yen", CHF:"Swiss Franc" };
+const D2 = 86400;
+
+const fmtDate = ts => {
+  const d = new Date(ts * 1000), p = n => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())}`;
+};
+const fmtMonth = ts => {
+  const d = new Date(ts * 1000);
+  return `${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}`;
+};
+const usd = v => v >= 1e6 ? "$"+ (v/1e6).toFixed(2) +"M" : v >= 1e3 ? "$"+v.toFixed(0) : "$"+v.toFixed(2);
+const pct = v => (v*100).toFixed(2) + "%";
+const sgn = v => (v>=0?"+":"") + (v*100).toFixed(1) + "%";
+const fmtCurVal = (v, c) => {
+  if (v === undefined || Number.isNaN(v)) return "—";
+  if (c === "JPY") return "¥" + v.toFixed(0);
+  if (c === "USD") return usd(v);
+  const sym = { EUR:"€", GBP:"£", CHF:"CHF " }[c] || c + " ";
+  return sym + v.toLocaleString("en-US", { maximumFractionDigits: v < 100 ? 4 : 2 });
+};
+
+const lastOf = s => s && s.length ? s[s.length-1][0] : 0;
+const LS_KEY = "dbtc-bundle-v1";
+const memLoad = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch { return null; } };
+const memSave = b => { try { localStorage.setItem(LS_KEY, JSON.stringify(b)); } catch {} };
+const fetchJ = u => fetch(u, { cache:"no-store" }).then(r => r.ok ? r.json() : Promise.reject(new Error("http "+r.status))).catch(() => null);
+
+function merge(curr, cand) {
+  let next = { ...curr }, changed = false;
+  if (cand.difficulty && lastOf(cand.difficulty) > lastOf(curr.difficulty || [])) { next.difficulty = cand.difficulty; changed = true; }
+  if (cand.market_price && lastOf(cand.market_price) > lastOf(curr.market_price || [])) { next.market_price = cand.market_price; changed = true; }
+  if (cand.fx) {
+    const fx = { ...(curr.fx || {}) }; let fxChanged = false;
+    for (const c of CURR) {
+      const a = (curr.fx||{})[c] || [], b2 = (cand.fx||{})[c] || [];
+      if (lastOf(b2) > lastOf(a)) { fx[c] = b2; fxChanged = true; }
+    }
+    if (fxChanged) { next.fx = fx; changed = true; }
+  }
+  return changed ? next : curr;
+}
+
+let _bundle = null;
+const bundleData = () => {
+  if (_bundle) return _bundle;
+  const mem = memLoad();
+  _bundle = mem ? merge(BUNDLE, mem) : BUNDLE;
+  memSave(_bundle);
+  return _bundle;
+};
+const writeBundle = b => { _bundle = b; memSave(b); };
+
+/* ================================================== background refresh ==== */
+async function tryRefresh() {
+  const notes = [], cand = {};
+  cand.difficulty = await fetchJ("./data/difficulty.json");
+  cand.market_price = await fetchJ("./data/market_price.json");
+
+  const nowT = Math.floor(Date.now()/1000);
+  const fxJson = await fetchJ(
+    `https://api.frankfurter.app/${fmtDate(nowT-320*D2)}..${fmtDate(nowT)}?from=USD&to=${CURR.filter(c=>c!=="USD").join(",")}`);
+  if (fxJson && fxJson.rates) {
+    cand.fx = {};
+    for (const c of CURR) {
+      if (c === "USD") { cand.fx.USD = [[0, 1]]; continue; }
+      cand.fx[c] = Object.entries(fxJson.rates).map(([d, r]) =>
+        [Math.floor(Date.parse(d+"T00:00:00Z")/1000), r[c]]).sort((a,b)=>a[0]-b[0]);
+    }
+  }
+  const newer = merge(bundleData(), cand);
+  if (newer !== bundleData()) { writeBundle(newer); renderAll(); notes.push("refreshed from sibling data"); }
+  if (fxJson && fxJson.rates) notes.push("FX refreshed from ECB");
+  const n = document.getElementById("refresh-note");
+  if (n) n.textContent = notes.length ? "↻ "+notes.join(" · ") : "";
+}
+
+/* ============================================================== model ====== */
+function periodIndex(dif) {
+  const p = new Array(dif.length); let c = 0;
+  for (let i = 0; i < dif.length; i++) { if (i === 0 || dif[i] !== dif[i-1]) c++; p[i] = c-1; }
+  return p;
+}
+
+function slidingSmoothedDiff(dif, window) {
+  const BPD = 144, nb = window * 2016, reps = new Float64Array(dif.length * BPD);
+  for (let i = 0; i < dif.length; i++) { const base = i*BPD; for (let k = 0; k < BPD; k++) reps[base+k] = dif[i]; }
+  const cs = new Float64Array(reps.length+1);
+  for (let i = 0; i < reps.length; i++) cs[i+1] = cs[i] + reps[i];
+  const out = new Array(dif.length);
+  for (let i = 0; i < dif.length; i++) {
+    const end = (i+1)*BPD - 1, lo = end - nb + 1;
+    out[i] = (cs[end+1] - (lo > 0 ? cs[lo] : 0)) / (lo <= 0 ? end+1 : nb);
+  }
+  return out;
+}
+
+function buildGrid(difficulty, price, fx) {
+  const diffM = new Map(difficulty), spotM = new Map(price);
+  const fxM = {};
+  for (const c of CURR) fxM[c] = new Map((fx[c]||[]).map(r => [r[0], r[1]]));
+  const dates = Array.from(new Set([...diffM.keys(), ...spotM.keys()])).sort((a,b)=>a-b);
+  const N = dates.length;
+  const diff = new Array(N).fill(NaN), spot = new Array(N).fill(NaN);
+  const fxv = {}; for (const c of CURR) fxv[c] = new Array(N).fill(NaN);
+  let d = NaN, s = NaN, f = {}; for (const c of CURR) f[c] = c === "USD" ? 1 : NaN;
+  for (let i = 0; i < N; i++) {
+    const t = dates[i];
+    if (diffM.has(t)) d = diffM.get(t);
+    if (spotM.has(t)) s = spotM.get(t);
+    for (const c of CURR) if (fxM[c].has(t)) f[c] = fxM[c].get(t);
+    diff[i] = d; spot[i] = s; for (const c of CURR) fxv[c][i] = c === "USD" ? 1 : f[c];
+  }
+  /* Match the Python pipeline exactly: forward-fill spot, then keep only days
+     where the DIFFICULTY feed itself has a value (that is what analyze.load_data
+     + dropna feed into the smoother). Difficulty-only / price-only days are
+     dropped, so the smoothed series is bit-identical to lending.py. */
+  const rows = [];
+  for (let i = 0; i < N; i++) {
+    if (!diffM.has(dates[i])) continue;          // no difficulty this day
+    if (Number.isNaN(spot[i])) continue;         // no price before 2010-07
+    const row = { t: dates[i], diff: diff[i], spot: spot[i], fx: {} };
+    for (const c of CURR) row.fx[c] = fxv[c][i];
+    rows.push(row);
+  }
+  const diffF = rows.map(r => r.diff);
+  return { rows, diffF, sm: slidingSmoothedDiff(diffF, META.smooth) };
+}
+
+function allSeries() {
+  const b = bundleData();
+  const g = buildGrid(b.difficulty, b.market_price, b.fx);
+  const rows = g.rows;
+  const T = Math.floor(Date.parse(ANCHOR+"T00:00:00Z")/1000);
+  const Ti = Math.floor(Date.parse(INCEP+"T00:00:00Z")/1000);
+  const R = rows.map((r, i) => {
+    const ratio = g.sm[i] / D0;
+    const dbtc = P0 * Math.pow(ratio, B);
+    const row = { t: r.t, sm: g.sm[i], ratio, dbtc, spot: r.spot, fx: r.fx, dbtcCur: {} };
+    for (const c of CURR) row.dbtcCur[c] = Number.isNaN(r.fx[c]) ? NaN : dbtc * r.fx[c];
+    return row;
+  }); // all history rows (2010 -> now), not anchored
+  const a0 = R.findIndex(r => r.t >= T) || 0;
+  const si = R.findIndex(r => r.t >= Ti) || 0;
+  const fromAnchor = R.slice(a0);
+  const inc = fromAnchor[Math.max(si - a0, 0)];
+  const norm = {}, basket = [];
+  for (const c of CURR) norm[c] = fromAnchor.map(r => ({ t: r.t, v: r.dbtcCur[c] / inc.dbtcCur[c] }));
+  for (const r of fromAnchor) {
+    let lg = 0;
+    for (const c of CURR) { const rel = r.dbtcCur[c] / inc.dbtcCur[c]; if (!Number.isNaN(rel) && rel > 0) lg += BASKET[c]*Math.log(rel); }
+    basket.push({ t: r.t, v: Math.exp(lg) });
+  }
+  return { all: R, rows: fromAnchor, si: Math.max(si - a0, 0), inc, norm, basket, a0 };
+}
+
+function statsOf(series) {
+  const inc = series[0].v;
+  let peak = inc, maxDD = 0, worstBelow = 0, in1 = 0, in5 = 0;
+  const rets = [];
+  for (let i = 1; i < series.length; i++) {
+    if (series[i-1].v <= 0 || series[i].v <= 0) continue;
+    rets.push(Math.log(series[i].v / series[i-1].v));
+    peak = Math.max(peak, series[i].v);
+    maxDD = Math.max(maxDD, 1 - series[i].v / peak);
+    worstBelow = Math.min(worstBelow, series[i].v / inc - 1);
+    const d = Math.abs(series[i].v / inc - 1);
+    if (d <= 0.01) in1++; if (d <= 0.05) in5++;
+  }
+  const n = rets.length, mu = rets.reduce((a,b)=>a+b,0)/Math.max(n,1);
+  const sd = n > 1 ? Math.sqrt(rets.reduce((a,r)=>a+(r-mu)*(r-mu),0)/(n-1)) : NaN;
+  const last = series[series.length-1].v;
+  return { inc, last, change: last/inc-1, maxDD, worstBelow,
+           volAnn: sd*Math.sqrt(365), in1: in1/Math.max(series.length-1,1), in5: in5/Math.max(series.length-1,1) };
+}
+
+/* ============================================================ ECharts ===== */
+const chartEls = [];
+function ech(id, opt) {
+  const c = echarts.init(document.getElementById(id));
+  c.setOption(opt);
+  chartEls.push(c);
+  return c;
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => chartEls.forEach(c => { try { c.resize(); } catch {} }));
+}
+
+const tsMs = ts => ts * 1000;                          // unix s -> ECharts(ms)
+const MKS_V = { lineStyle: { color: "#7b7f8a", type: "dashed", width: 1 }, symbol: "none",
+                label: { fontSize: 11, color: "#6b7380", formatter: p => p.label, position: "insideEndTop" } };
+const MARK = (label, shift) => ({ xAxis: tsMs(shift), label: { formatter: label } });
+
+function baseOpt({ log, yMin, yMax, marks, area, legend, legendSelected, h }) {
+  const o = {
+    backgroundColor: "transparent",
+    grid: { left: 58, right: 18, top: h && h.top || 30, bottom: 58 },
+    tooltip: { trigger: "axis", confine: true, valueFormatter: v => (v === null || v === undefined) ? "" : String(Number.isInteger(v) ? v : v.toFixed(2)) },
+    xAxis: { type: "time", boundaryGap: false, axisLine: { lineStyle: { color: "#aab3bd" } },
+             axisLabel: { color: "#6b7380", formatter: v => fmtMonth(v / 1000) } },
+    yAxis: {},
+    dataZoom: [
+      { type: "inside", xAxisIndex: 0, start: 0, end: 100, zoomOnMouseWheel: true, moveOnMouseWheel: true },
+      { type: "slider", xAxisIndex: 0, start: 0, end: 100, height: 20, bottom: 6, borderColor: "#b6bec7", fillerColor: "rgba(31,157,85,0.12)" },
+    ],
+    series: [],
+  };
+  if (log) {
+    o.yAxis = { type: "log", logBase: 10, scale: true,
+                axisLabel: { color: "#6b7380", formatter: v => fmtAxis(v) },
+                splitLine: { lineStyle: { color: "#e6eaf0" } }, minorSplitLine: { show: true, lineStyle: { color: "#eef0f3" } } };
+  } else {
+    o.yAxis = { type: "value",
+                axisLabel: { color: "#6b7380", formatter: v => v.toFixed(2) },
+                splitLine: { lineStyle: { color: "#e6eaf0" } } };
+  }
+  if (yMin !== undefined) o.yAxis.min = yMin;
+  if (yMax !== undefined) o.yAxis.max = yMax;
+  if (legend) {
+    o.legend = { top: 0, data: legend, selected: legendSelected || {},
+                 textStyle: { fontSize: 12 }, itemWidth: 14, itemHeight: 9 };
+  }
+  return o;
+}
+function fmtAxis(v) {
+  return v >= 1e9 ? (v/1e9).toFixed(1)+"B" : v >= 1e6 ? (v/1e6).toFixed(1)+"M"
+    : v >= 1e3 ? (v/1e3).toFixed(0)+"K" : Math.abs(v-1) < 1e-6 ? "1.0" : v.toFixed(2);
+}
+function lineSeries(name, color, data, width, dash) {
+  const ds = data.filter(p => !Number.isNaN(p.v)).map(p => [tsMs(p.t), p.v]);
+  const s = { name, type: "line", showSymbol: false, smooth: true, data: ds, lineStyle: { width: width || 1.6, color } };
+  if (dash) s.lineStyle.type = "dashed";
+  return s;
+}
+function markLines(anchorT, incepT) {
+  return { ...MKS_V, data: [
+    MARK("anchor 2016-01-01", anchorT),
+    MARK("law frozen " + INCEP, incepT),
+  ] };
+}
+function fitArea(anchorT, incepT) {
+  return { silent: true, itemStyle: { color: "rgba(31,157,85,0.06)" },
+           data: [ [{ xAxis: tsMs(anchorT), label: { formatter: "fit window", color: "#8a93a0", fontSize: 11, position: "insideTop" } },
+                     { xAxis: tsMs(incepT) }] ] };
+}
+
+/* ============================================================ render page == */
+function renderAll() {
+  const b = bundleData();
+  const A = allSeries();
+  const rows = A.rows, si = A.si, inc = A.inc;
+  const T = Math.floor(Date.parse(ANCHOR+"T00:00:00Z")/1000);
+  const Ti = Math.floor(Date.parse(INCEP+"T00:00:00Z")/1000);
+  document.getElementById("calc-date").textContent = document.getElementById("calc-date2").textContent
+    = document.getElementById("incep-date").textContent = document.getElementById("incep-date2").textContent = INCEP;
+  document.getElementById("cr").textContent = CR;
+  document.getElementById("foot-built").textContent =
+    `· page built ${META.built_at||"?"} · data as of ${fmtDate(lastOf(b.difficulty))} (difficulty), ${fmtDate(lastOf(b.market_price))} (spot).`;
+
+  const ageDays = (Date.now()/1000 - lastOf(b.difficulty)) / D2;
+  const vb = document.getElementById("verdict");
+  if (ageDays <= 7)      { vb.className = "badge ok";   vb.textContent = "Tracking — difficulty data current"; }
+  else if (ageDays <= 31){ vb.className = "badge warn"; vb.textContent = `Data ageing ${Math.round(ageDays)}d`; }
+  else                   { vb.className = "badge bad";  vb.textContent = `Stale — rebuild to refresh (${Math.round(ageDays)}d)`; }
+  document.getElementById("dataage").textContent =
+    `difficulty ${fmtDate(lastOf(b.difficulty))} · spot ${fmtDate(lastOf(b.market_price))} · FX ${fmtDate(lastOf((b.fx?.GBP)||[]))}`;
+
+  const last = rows[rows.length-1];
+  const su = statUSD(rows, si);
+  const floor = Math.pow(1/CR, 1/B);
+  const devs = rows.slice(si).map(r => r.spot / r.dbtc).filter(v => !Number.isNaN(v));
+  const devMin = devs.length ? Math.min(...devs) : NaN;
+  const margin = devMin * CR - 1;
+
+  const cards = [
+    { k:"DBTC / USD now", v:usd(last.dbtc), d:`${sgn(last.dbtc/inc.dbtc-1)} since inception` },
+    { k:"Spot BTC (ref)", v:usd(last.spot), d:"market price" },
+    { k:"Max drawdown since inception", v:pct(-su.maxDD), d:"vs running peak" },
+    { k:"Volatility (90d, ann.)", v:(su.volAnn*100).toFixed(1)+"%", d:"DBTC/USD daily returns" },
+    { k:"Worst day vs inception", v:sgn(su.worstBelow), d:"lowest level reached" },
+    { k:"Days within ±5% of inception", v:Math.round(su.in5*100)+"%", d:`of ${rows.length-si} days` },
+  ];
+  document.getElementById("cards").innerHTML =
+    cards.map(c => `<div class="card"><div class="k">${c.k}</div><div class="v">${c.v}</div><div class="d">${c.d}</div></div>`).join("");
+
+  renderCharts(A, T, Ti, floor, devMin, margin);
+  renderTable(A);
+  renderLaw();
+}
+function statUSD(rows, si) {
+  const slice = rows.slice(si).map(r => ({ t: r.t, v: r.dbtc }));
+  return statsOf(slice);
+}
+
+function renderCharts(A, T, Ti, floor, devMin, margin) {
+  /* 1. merged: DBTC/USD full history since anchor, marks at anchor & freeze */
+  const o1 = baseOpt({ log: true });
+  o1.series = [
+    lineSeries("DBTC/USD (frozen law)", COL.dbtc, A.rows.map(r => ({ t: r.t, v: r.dbtc }))),
+    lineSeries("spot BTC", COL.spot, A.rows.map(r => ({ t: r.t, v: r.spot })), 1.1),
+  ];
+  o1.series[0].markArea = fitArea(T, Ti);
+  o1.series[0].markLine = markLines(T, Ti);
+  ech("c1", o1);
+
+  /* 2. stability since inception, all currencies + basket, default: basket+USD */
+  const legendNames = [...CURR, "basket"];
+  const sel = { basket: true };
+  for (const c of CURR) sel[c] = c === "USD";
+  const o2 = baseOpt({ log: false, legend: legendNames, legendSelected: sel });
+  o2.series = CURR.map(c => lineSeries(c, COL[c], A.norm[c], 1.2))
+    .concat([lineSeries("basket", COL.basket, A.basket, 2.2)]);
+  o2.series[0].markLine = { ...MKS_V, data: [MARK("inception " + INCEP, Ti)] };
+  o2.xAxis.min = tsMs(Ti);                       // the "since inception" window
+  o2.yAxis.axisLabel.formatter = v => v.toFixed(3);
+  ech("c2", o2);
+
+  /* 4. difficulty ratio vs liquidation floor */
+  const o4 = baseOpt({ log: true, yMin: floor * 0.9 });
+  o4.series = [ lineSeries("smoothed difficulty ratio D_s/D0", COL.dbtc, A.rows.map(r => ({ t: r.t, v: r.ratio }))) ];
+  o4.series[0].markLine = { symbol: "none", lineStyle: { color: "#c62828", type: "dashed", width: 1 },
+    data: [ { yAxis: floor, label: { formatter: `liquidation floor (1/CR)^(1/b) = ${floor.toFixed(3)}`, color: "#c62828", position: "insideEndBottom" } } ] };
+  ech("c4", o4);
+
+  document.getElementById("dataage").textContent +=
+    ` · W=${SMOOTH}p · b=${B.toFixed(4)} · P0=${usd(P0)} · D0=${D0.toExponential(3)}` +
+    (Number.isNaN(devMin) ? "" : ` · worst spot/DBTC=${devMin.toFixed(2)} (CR=${CR} → margin ${(margin*100).toFixed(0)}%)`);
+}
+
+function renderTable(A) {
+  const rows = A.rows, si = A.si, inc = A.inc, last = rows[rows.length-1];
+  const hd = t => `<th>${t}</th>`;
+  let trs = "";
+  for (const c of CURR) {
+    const st = statsOf(A.norm[c].slice(si));
+    trs += `<tr>
+      <td><span class="swatch" style="background:${COL[c]}"></span>${c} <span class="meta">· ${CURNAME[c]}</span></td>
+      <td>${fmtCurVal(last.dbtcCur[c], c)}</td><td>${fmtCurVal(inc.dbtcCur[c], c)}</td>
+      <td>${sgn(st.change)}</td><td>${pct(-st.maxDD)}</td><td>${sgn(st.worstBelow)}</td>
+      <td>${(st.volAnn*100).toFixed(1)}%</td><td>${Math.round(st.in1*100)}%</td><td>${Math.round(st.in5*100)}%</td>
+    </tr>`;
+  }
+  const stb = statsOf(A.basket.slice(si));
+  trs += `<tr>
+    <td><span class="swatch" style="background:${COL.basket}"></span>Basket <span class="meta">· equal-weight geo mean (rebased)</span></td>
+    <td>${stb.last.toFixed(3)}×</td><td>1.000×</td><td>${sgn(stb.change)}</td>
+    <td>${pct(-stb.maxDD)}</td><td>${sgn(stb.worstBelow)}</td>
+    <td>${(stb.volAnn*100).toFixed(1)}%</td><td>${Math.round(stb.in1*100)}%</td><td>${Math.round(stb.in5*100)}%</td>
+  </tr>`;
+  document.getElementById("tbl").innerHTML = `<table>
+    <thead><tr><th></th>${["now","at inception","change","max DD (peak)","worst vs inception","ann. vol","±1% days","±5% days"].map(hd).join("")}</tr></thead>
+    <tbody>${trs}</tbody></table>`;
+}
+
+function renderLaw() {
+  const l = META;
+  document.getElementById("law").innerHTML = `
+    <div class="sub" style="margin-bottom:8px">
+      <code>DBTC/USD(t) = P0 × (D<sub>s</sub>(t)/D0)<sup>b</sup></code> with P0 ≡ spot(anchor)·e<sup>a</sup>;
+      D<sub>s</sub> = block-interpolated mean difficulty over the trailing ${l.smooth}×2016 blocks.
+    </div>
+    <table><thead><tr><th></th><th>value</th><th>meaning</th></tr></thead><tbody>
+      <tr><td>calc_date</td><td>${l.calc_date}</td><td>day the law was frozen (last refit)</td></tr>
+      <tr><td>anchor</td><td>${l.anchor}</td><td>normalisation point for the fit</td></tr>
+      <tr><td>smoothing W</td><td>${l.smooth} periods</td><td>${l.smooth}×2016 blocks ≈ 1 year</td></tr>
+      <tr><td>b</td><td>${l.b.toFixed(6)}</td><td>fitted exponent (immutable after freeze)</td></tr>
+      <tr><td>a</td><td>${l.a.toFixed(6)}</td><td>log-intercept</td></tr>
+      <tr><td>P0</td><td>${usd(l.P0)}</td><td>USD calibration at the anchor (spot·e<sup>a</sup>)</td></tr>
+      <tr><td>D0</td><td>${l.D0.toExponential(4)}</td><td>smoothed difficulty at the anchor</td></tr>
+      <tr><td>CR</td><td>${l.cr || 3}×</td><td>collateral ratio for the liquidation floor</td></tr>
+    </tbody></table>`;
+}
+
+/* ---- go ---------------------------------------------------------------- */
+renderAll();
+tryRefresh();
+</script>
+</body>
+</html>

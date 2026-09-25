@@ -43,6 +43,11 @@ from dbtc import analyze  # noqa: E402
 from dbtc import backtest as bt  # noqa: E402
 from dbtc import COLORS, shade  # noqa: E402
 
+try:
+    from dbtc import frozen as frozen_mod  # noqa: E402
+except Exception:  # noqa: BLE001
+    frozen_mod = None
+
 OUT = Path(__file__).resolve().parent / "out"
 
 
@@ -58,15 +63,23 @@ def _fmt_usd(v: float) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--since", default="2016-01-01",
-                        help="anchor date for frozen constants (default 2016-01-01)")
-    parser.add_argument("--smooth", type=int, default=26,
-                        help="difficulty smoothing window in periods of 2016 blocks (recommended 26 ≈ 1 year)")
+    parser.add_argument("--since", default=None,
+                        help="anchor date for frozen constants (default: frozen law anchor, 2016-01-01)")
+    parser.add_argument("--smooth", type=int, default=None,
+                        help="difficulty smoothing window in periods of 2016 blocks (default: frozen law, 26 ≈ 1 year)")
     parser.add_argument("--collat", type=float, default=3.0,
                         help="collateral ratio (recommended 3.0)")
     parser.add_argument("--law-b", type=float, default=None,
-                        help="override the fitted exponent b (default: auto-fit on --since/--smooth)")
+                        help="override the fitted exponent b (default: frozen law b; delete data/frozen_law.json to refit)")
     args = parser.parse_args()
+
+    law = frozen_mod.load() if frozen_mod is not None else None
+    if law is not None:
+        args.since = args.since or law["anchor"]
+        args.smooth = args.smooth if args.smooth is not None else law["smooth"]
+        args.law_b = args.law_b if args.law_b is not None else law["b"]
+    args.since = args.since or "2016-01-01"
+    args.smooth = args.smooth if args.smooth is not None else 26
 
     df = analyze.load_data()
     df["price"] = df["price"].ffill()
@@ -76,8 +89,12 @@ def main() -> int:
     fl = bt.fit_law(df, args.since, args.smooth)
     b = args.law_b if args.law_b is not None else float(fl["b"])
     a = float(fl["a"])
-    anchor_idx = df.index.searchsorted(pd.Timestamp(args.since))
-    P0 = float(df["price"].iloc[anchor_idx]) * np.exp(a)
+    if law is not None:
+        a = float(law["a"])
+        P0 = float(law["P0"])
+    else:
+        anchor_idx = df.index.searchsorted(pd.Timestamp(args.since))
+        P0 = float(df["price"].iloc[anchor_idx]) * np.exp(a)
 
     d = df.loc[df.index >= pd.Timestamp(args.since)].copy()
     sd = analyze.sliding_smoothed_diff(df, args.smooth).reindex(d.index)

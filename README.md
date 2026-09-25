@@ -5,6 +5,22 @@ difficulty. It uses difficulty as an independent, on-chain, fiat-agnostic signal
 demand. Still very much research, model-first: the repo does the numerical homework and
 every claim below is backed by a committed chart under `out/`.
 
+## Live tracker — is the model holding?
+
+> **→ [`site/index.html`](site/index.html)** — a self-contained page that shows DBTC/USD
+> (and EUR/GBP/JPY/CHF + a weighted basket) computed from the **frozen** difficulty law,
+> rebased to its freeze day, with since-inception drawdowns and volatility.
+
+The law was fitted **once** (on the data that existed 2026-08-16) and is then immutable:
+`DBTC/USD = P0 × (D_s/D0)^b` with `b=0.673473, P0=$455.91, D0=5.46e10`, 26-period block
+smoothing. Only network difficulty and FX move; the parameters never refit.
+
+- Open `site/index.html` locally (or serve `site/`, e.g. `python -m http.server -d site`).
+  It renders instantly from embedded data, then refreshes FX from ECB in your browser and
+  difficulty/price from sibling `data/*.json` when run from a server.
+- Rebuild it with fresh data: `python build_page.py` (add `--force` to force re-download).
+  Each build embeds today's difficulty & market price and recomputes every number on the page.
+
 ## Contents
 
 - [The idea](#the-idea)
@@ -223,9 +239,10 @@ Run: `./.venv/bin/python backtest.py --since 2016-01-01 --smooth 26` — prints 
 
 ## `lending.py` — live protocol numbers
 
-Frozen defaults: `--since 2016-01-01`, `--smooth 26` (periods), `--law-b` auto-fitted
-≈0.67, `--collat 3.0`. Once frozen, USD is never consulted at runtime; every number below
-is difficulty arithmetic.
+Frozen defaults: anchor `2016-01-01`, smoothing `26` periods, law `b=0.673473`,
+`P0=$455.91` (all read from `data/frozen_law.json` — fitted once on the cached data,
+never re-fitted), CR `3.0`. Once frozen, USD is never consulted at runtime; every number
+below is difficulty arithmetic.
 
 1. **Mint** — per 1 locked BTC, `mint = (D_ratio)^b / CR`. Today ≈ **65.4 DBTC/BTC**
    (`D_s ratio ≈ 2,549`, `b ≈ 0.673`, `CR=3`).
@@ -301,13 +318,19 @@ solc --bin --optimize contracts/DBTCPrice.sol   # compiles with solc 0.8.25
 main.py                  # download → analyse (difficulty vs price) → plot
 backtest.py              # "what-if we launched N years ago" + merchant/collateral sweeps
 lending.py               # live: mint / liquidation / USD value / 30d+12m prices
+build_page.py            # refresh feeds → bundle → site/index.html (live tracker)
 dbtc/analyze.py     # load data, smoothing windows, OLS fit, metrics
-dbtc/backtest.py    # value models + cashflow simulators + merchant/collateral metrics
-dbtc/plot.py        # analysis charts → out/*.png
-dbtc/download.py     # blockchain.info fetcher, ~1-day cache
+dbtc/frozen.py      # the ONE fitted law (b, a, P0, D0); compute once, store, never refit
+dbtc/fx.py         # ECB daily FX (Frankfurter) cached in data/fx.json
+dbtc/backtest.py   # value models + cashflow simulators + merchant/collateral metrics
+dbtc/plot.py       # analysis charts → out/*.png
+dbtc/download.py     # blockchain.info fetcher, cache-staleness by last data point
 contracts/DBTCPrice.sol      # reference Rootstock oracle (diff → DBTC/BTC, see above)
 contracts/libraries/FixedPointMath.sol  # 64.64 fixed-point pow for the ^b law
-data/                    # cached blockchain.info JSON (auto-refreshed)
+data/                    # cached blockchain.info + ECB JSON (auto-refreshed)
+data/frozen_law.json     # the immutable law used by lending.py and site/index.html
 out/*.png                # committed charts referenced by this README
 out/backtest/10_window_vol.png   # W-sweep → the 26-period default (see "Choosing the window")
+site/index.html          # self-contained live tracker page (build_page.py)
+site/data/*.json         # same feeds in page shape, for hosting/CI diffing
 ```

@@ -1,9 +1,10 @@
-# DBTC
+# DBTC · Bemand
 
-**D**emand / **D**ifficulty BTC — a lending/accounting unit minted from Bitcoin network
-difficulty. It uses difficulty as an independent, on-chain, fiat-agnostic signal for BTC
-demand. Still very much research, model-first: the repo does the numerical homework and
-every claim below is backed by a committed chart under `out/`.
+**Bemand** — *Bitcoin demand*, ticker **DBTC** — a low-volatility lending/accounting unit
+derived from Bitcoin network difficulty. Difficulty is an independent, on-chain,
+fiat-agnostic signal for BTC demand: the protocol needs no price oracle and no fiat.
+The app unit is the **bem** (10^-6 DBTC), written `Ƃ1.00` — 1 DBTC = 1,000,000 bems,
+read like sats & BTC but exactly metric. Still very much research, model-first.
 
 ## Status
 
@@ -12,9 +13,9 @@ The law was fitted **once** (on the data that existed 2026-08-16) and is then im
 smoothing, reference date 2016-01-01. Only network difficulty and ECB FX move. Is it holding?
 
 <!-- dbtc:status:start -->
-_Updated 2026-09-25 12:30 UTC · data 2026-09-24 / spot 2026-09-25 · law set 2026-08-16_
+_Updated 2026-09-25 13:34 UTC · data 2026-09-24 / spot 2026-09-25 · law set 2026-08-16_
 
-1 DBTC = **$89,593** · spot BTC = $84,385
+1 DBTC = **$89,593** · spot BTC = $84,385 · Ƃ1.00 = $0.09
 
 ![track](out/track.png)
 
@@ -29,6 +30,7 @@ _Regenerate with `python track.py` (`--force` re-downloads)._
 
 - [Status](#status)
 - [The idea](#the-idea)
+- [Units & notation: DBTC, Bemands, bems](#units--notation-dbtc-bemands-bems)
 - [Raw data (since 2009)](#raw-data-since-2009)
 - [Does difficulty track relative price?](#does-difficulty-track-relative-price-analysis-mainpy)
 - [The price models (`backtest.py`)](#the-price-models-backtestpy)
@@ -57,6 +59,36 @@ A protocol loop (RBTC):
 Because difficulty is a pure protocol-internal measure, DBTC can be *accounted* in
 USD via its 50WMA/200WMA analogue for reference, but the protocol value never depends on
 an external feed.
+
+## Units & notation: DBTC, Bemands, bems
+
+**DBTC** (the ticker) is a **Bemand** — *Bitcoin demand*. The unit apps use is the
+**bem**, the metric *micro*DBTC:
+
+| unit | value | description |
+|------|-------|-------------|
+| 1 DBTC | 1,000,000 bem | the whole token (used for protocol/lending math) |
+| 1 bem  | 10^-6 DBTC     | the app unit, formatted `Ƃ1.00` |
+
+Read the pairing exactly like sats & BTC, but without the 10^-8 quirk: bems are
+**exactly metric** (micro, 10^-6), so the prefix, the number of decimals and the
+name all agree. The glyph is `Ƃ` (U+0182, "BCU") and sits before the amount —
+**Ƃ1.00**.
+
+- **On-chain (EVM)**: an ERC-20 with `decimals() = 18`, so 1 DBTC = 10^18 base
+  units and 1 bem = 10^12 base units (a *picobem*). The bem is the
+  app/accounting unit (`Ƃ1.00`), but it is **not** atomic on-chain: fractions
+  of a bem — down to 10^-12 — are fully transactable, exactly like fractional
+  USDT/USD amounts. Apps render two decimals and round only at display time.
+- **Oracle precision**: the reference contract returns 64.64 fixed point
+  (resolution 2^-64 ≈ 5.4×10^-20, ~10^13× finer than a bem; one quantum ≈ 0.054
+  base units), so a ratio → base-units conversion rounds to < 1 base unit —
+  effectively exact.
+- **Scale today**: 1 DBTC ≈ $89.6k ⇒ `Ƃ1.00` ≈ $0.09, so everyday prices land in
+  the tens–thousands of Ƃ with ~0.1¢ per 0.01 Ƃ — JPY-like magnitudes with
+  cent-grade granularity.
+- **Glyph caveat**: `Ƃ` is a rare codepoint — many system fonts fall back to
+  tofu, so apps should bundle a font/variant that contains it (see `dbtc/units.py`).
 
 ## Raw data (since 2009)
 
@@ -325,6 +357,7 @@ backtest.py              # "what-if we launched N years ago" + merchant/collater
 lending.py               # live: mint / liquidation / USD value / 30d+12m prices
 track.py                 # refreshes feeds → rewrites the Status block + out/track.png (volatility chart)
 dbtc/analyze.py     # load data, smoothing windows, OLS fit, metrics
+dbtc/units.py       # units & notation: bem = 10^-6 DBTC, Ƃ formatting
 dbtc/frozen.py      # the ONE fitted law (b, a, P0, D0); compute once, store, never refit
 dbtc/fx.py         # ECB daily FX (Frankfurter) cached in data/fx.json
 dbtc/backtest.py   # value models + cashflow simulators + merchant/collateral metrics

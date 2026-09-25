@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dbtc import analyze  # noqa: E402
 from dbtc import backtest as bt  # noqa: E402
+from dbtc import units  # noqa: E402
 from dbtc import COLORS, shade  # noqa: E402
 
 try:
@@ -142,6 +143,8 @@ def main() -> int:
     print(f"   DBTC / BTC = {spb_now:.4f}          (per the difficulty law: 1 BTC = {spb_now:.2f} DBTC)")
     print(f"   BTC / DBTC = {bps_now:.6f}   (same law frame)")
     print(f"   DBTC / USD = {_fmt_usd(p_now)}        (spot BTC = {_fmt_usd(spot_now)})")
+    print(f"   1 DBTC = {units.fmt_bem(units.to_bem(1))}  ·  1 bem = {units.fmt_usd_bem(p_now)}   "
+          f"(bem = micro-DBTC, the app unit; on-chain decimals()={units.TOKEN_DECIMALS})")
     print(f"   DBTC vs spot: 1 DBTC = {spot_now / p_now:.3f} spot-BTC "
           f"(difficulty-law frame vs market — that gap is the protocol basis)")
     print("   ========================================")
@@ -152,6 +155,7 @@ def main() -> int:
     print("1. MINT — per 1 BTC locked (difficulty-only formula)")
     print(f"   difficulty ratio now  D_s(t)/D_s(t0) = {growth_now:,.1f}")
     print(f"   mint  = (D_ratio)^b / CR  =  {growth_now:,.1f}^{b:.3f} / {CR:.2f}  =  {mint:.2f} DBTC")
+    print(f"   in app units: {units.fmt_bem(units.to_bem(mint))} per 1 BTC locked")
     print(f"   (the count lives purely in the difficulty-law frame; the protocol basis is that "
           "difficulty-law unit, not USD)")
     print()
@@ -175,6 +179,7 @@ def main() -> int:
     # ---- 3. USD value ----
     print("3. USD VALUE of DBTC")
     print(f"   today: 1 DBTC = {_fmt_usd(p_now)}   (= P0 × (D_ratio)^b, frozen anchor)")
+    print(f"   in app units: {units.fmt_bem(units.to_bem(1))} = 1 DBTC  ·  {units.fmt_bem(1)} ≈ {units.fmt_usd_bem(p_now)}")
     print(f"   spot BTC = {_fmt_usd(spot_now)}   (spot/Smooth = {spot_now/p_now:.2f})")
     print(f"   in BTC terms: 1 DBTC = {1/spb_now:.6f} BTC")
     print()

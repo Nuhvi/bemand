@@ -44,6 +44,16 @@ interface IBridge {
 /// the contract stores per-period `(2^224 / target)` terms.
 ///
 /// All price results are returned as signed 64.64 fixed point (value * 2**64).
+///
+/// Units & notation: 1 DBTC = 10^6 **bem** (metric microDBTC), the app unit
+/// shown as `Ƃ1.00`. A DBTC ERC-20 should use EVM-style `decimals() = 18`, so
+/// 1 DBTC = 10^18 base units and 1 bem = 10^12 base units (a picobem): the bem
+/// is the accounting unit but is *not* atomic — fractions of a bem, down to
+/// 10^-12, are transactable. These getters keep 64.64 resolution (2^-64 ≈
+/// 5.4e-20 DBTC, ~10^13x finer than a bem; one quantum ≈ 0.054 base units), so
+/// converting any ratio to base units — `value_base = round(value_64_64 / 2^64
+/// * 10^18)` — is exact to < 1 base unit; that conversion lives in the
+/// token/wallet layer, not here.
 contract DBTCPrice {
     uint256 internal constant RETARGET = 2016; // blocks per difficulty period
     uint256 internal constant D_SCALE = 0x1 << 224; // scale of stored per-period difficulty

@@ -34,7 +34,7 @@ import pandas as pd  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from dbtc import analyze, download, frozen, fx  # noqa: E402
+from dbtc import analyze, download, frozen, fx, units  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 README = ROOT / "README.md"
@@ -110,7 +110,7 @@ def build_status(law: dict, w: pd.DataFrame, diff_s: str, spot_s: str) -> str:
     return f"""\
 _Updated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC · data {diff_s} / spot {spot_s} · law set {law['calc_date']}_
 
-1 DBTC = **${now:,.0f}** · spot BTC = ${spot:,.0f}
+1 DBTC = **${now:,.0f}** · spot BTC = ${spot:,.0f} · {units.fmt_bem(1)} = {units.fmt_usd_bem(now)}
 
 ![track](out/track.png)
 

@@ -9,26 +9,25 @@ every claim below is backed by a committed chart under `out/`.
 
 The law was fitted **once** (on the data that existed 2026-08-16) and is then immutable:
 `DBTC/USD = P0 × (D_s/D0)^b`, `b=0.673473`, `P0=$455.91`, `D0=5.46e10`, 26-period block
-smoothing, reference date 2016-01-01. Only network difficulty and ECB FX move. Quick proof:
+smoothing, reference date 2016-01-01. Only network difficulty and ECB FX move. Is it holding?
 
-<!-- dbtc:tldr:start -->
-_Updated 2026-09-25 11:27 UTC · data 2026-09-24 (difficulty) / 2026-09-25 (spot) · law set 2026-08-16_
+<!-- dbtc:status:start -->
+_Updated 2026-09-25 11:37 UTC · data 2026-09-24 / spot 2026-09-25 · law set 2026-08-16_
 
-**Working — BTC's volatility is intrinsic.** 90-day annualised vol of BTC priced in
-**USD 58% · DBTC 58% · fiat-basket 56%** vs **DBTC/USD 0.17%**
-(the unit itself barely moves). The three BTC price frames fall and rise together — worst
-single day since 2016: -39.1% in USD and -39.2% in DBTC, ≈1.64× collateral either
-way. Since inception (39 days) DBTC/USD has stayed within -0.2% of its level
-(now **$89,593** vs spot $84,385). Tables & chart: [Current status](#current-status).
-<!-- dbtc:tldr:end -->
+1 DBTC = **$89,593** · spot BTC = $84,385 — rolling 90-day annualised volatility:
 
-_Full tables and chart: [Current status](#current-status). Regenerate both with `python track.py` (`--force` re-downloads)._
+![track](out/track.png)
+
+_BTC is ~58% volatile whether priced in **USD, DBTC, or a fiat basket** (58% / 56%); the DBTC unit itself is **0.17%** in USD
+and 4.2% in the basket (that spread is pure fiat FX). The law is holding when the three BTC frames overlap high and the two unit lines sit far below._
+<!-- dbtc:status:end -->
+
+_Regenerate with `python track.py` (`--force` re-downloads)._
 
 ## Contents
 
 - [Status](#status)
 - [The idea](#the-idea)
-- [Current status](#current-status)
 - [Raw data (since 2009)](#raw-data-since-2009)
 - [Does difficulty track relative price?](#does-difficulty-track-relative-price-analysis-mainpy)
 - [The price models (`backtest.py`)](#the-price-models-backtestpy)
@@ -57,45 +56,6 @@ A protocol loop (RBTC):
 Because difficulty is a pure protocol-internal measure, DBTC can be *accounted* in
 USD via its 50WMA/200WMA analogue for reference, but the protocol value never depends on
 an external feed.
-
-## Current status
-
-The full numbers behind the [Status](#status) TLDR, regenerated from live difficulty,
-BTC price and ECB FX by `python track.py`. The proof in one line: **BTC's volatility is
-intrinsic** — it costs about the same to collateralise whether you price BTC in USD, in
-DBTC, or in a fiat basket; DBTC/USD (the unit) is the thing that is actually stable.
-
-<!-- dbtc:detail:start -->
-_Updated 2026-09-25 11:27 UTC · data through 2026-09-24 (difficulty) / 2026-09-25 (spot) / 2026-09-24 (FX) · law set 2026-08-16_
-
-**Now:** 1 DBTC = **$89,593** · spot BTC = $84,385
-per fiat: €78,819 · £67,773 · ¥14,231,876 · CHF 74,161 · basket **1.010×** inception level
-
-**Since inception (2026-08-16, 39 days):** vol 0.05% · max drawdown 0.2% · worst day vs inception -0.2% · 100% of days within ±5% of inception level
-
-**Realised volatility, annualised** (daily returns, rolling window of the given length):
-
-| series | 7d | 30d | 90d | 365d | since inception |
-|---|---|---|---|---|---|
-| **BTC/USD** | 64.54% | 43.96% | 57.63% | 49.85% | 88.67% |
-| **BTC/DBTC** | 64.54% | 43.97% | 57.63% | 49.88% | 88.67% |
-| **BTC/basket** | 62.86% | 43.91% | 56.35% | 49.15% | 86.58% |
-| **DBTC/USD** | 0.05% | 0.05% | 0.17% | 0.60% | 0.05% |
-| **DBTC/basket** | 5.22% | 4.48% | 4.16% | 4.70% | 4.75% |
-
-**Worst cumulative drop of the price of BTC — and the collateralisation it forces** (CR ≥ 1/(1+drop)):
-
-| price of BTC in | 1d drop → CR | 7d drop → CR | 30d drop → CR | 90d drop → CR | 365d drop → CR |
-|---|---|---|---|---|---|
-| **BTC/USD** | -39.1% → 1.64× | -46.7% → 1.88× | -59.6% → 2.48× | -61.3% → 2.59× | -83.2% → 5.94× |
-| **BTC/DBTC** | -39.2% → 1.65× | -47.4% → 1.90× | -64.1% → 2.78× | -73.1% → 3.72× | -95.1% → 20.50× |
-
-**Read:** BTC is about equally volatile priced in **USD, in DBTC, or in a fiat basket** — the three 90-day vol paths overlap (~40–90%): the DBTC unit moves so little it neither adds nor removes risk; it only changes the unit you quote in. DBTC/USD itself is ultra-low-vol (0.17% 90d, 0.05–0.6% by window) and since inception has kept all 39 days within ±5% of its level. The consequence: denominating collateral in DBTC does **not** cut the buffer against spot crashes. Worst single day since 2016 needs ≈1.64× in any frame, and over multi-week drawdowns the DBTC frame needs *more* (3.72× at 90d, up to 20.5× at 1y) because the unit keeps climbing while spot draws down. The binding risk is the spot/DBTC *level* (worst 0.30 → ~3.3× for never-liquidate), not difficulty.
-
-![track](out/track.png)
-
-_Parameters are frozen (set 2026-08-16); only difficulty and FX move. Regenerate with `python track.py`._
-<!-- dbtc:detail:end -->
 
 ## Raw data (since 2009)
 
@@ -362,7 +322,7 @@ solc --bin --optimize contracts/DBTCPrice.sol   # compiles with solc 0.8.25
 main.py                  # download → analyse (difficulty vs price) → plot
 backtest.py              # "what-if we launched N years ago" + merchant/collateral sweeps
 lending.py               # live: mint / liquidation / USD value / 30d+12m prices
-track.py                 # "Status"/"Current status" TLDR+detail → rewrites both README blocks + out/track.png
+track.py                 # refreshes feeds → rewrites the Status block + out/track.png (volatility chart)
 dbtc/analyze.py     # load data, smoothing windows, OLS fit, metrics
 dbtc/frozen.py      # the ONE fitted law (b, a, P0, D0); compute once, store, never refit
 dbtc/fx.py         # ECB daily FX (Frankfurter) cached in data/fx.json

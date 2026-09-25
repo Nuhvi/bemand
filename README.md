@@ -12,14 +12,15 @@ The law was fitted **once** (on the data that existed 2026-08-16) and is then im
 smoothing, reference date 2016-01-01. Only network difficulty and ECB FX move. Is it holding?
 
 <!-- dbtc:status:start -->
-_Updated 2026-09-25 11:37 UTC · data 2026-09-24 / spot 2026-09-25 · law set 2026-08-16_
+_Updated 2026-09-25 11:43 UTC · data 2026-09-24 / spot 2026-09-25 · law set 2026-08-16_
 
 1 DBTC = **$89,593** · spot BTC = $84,385 — rolling 90-day annualised volatility:
 
 ![track](out/track.png)
 
-_BTC is ~58% volatile whether priced in **USD, DBTC, or a fiat basket** (58% / 56%); the DBTC unit itself is **0.17%** in USD
-and 4.2% in the basket (that spread is pure fiat FX). The law is holding when the three BTC frames overlap high and the two unit lines sit far below._
+_DBTC quoted in USD is ~**0.17%** (90d) — barely a daily ripple. Quoted in the fiat basket it is ~4.2%,
+which is essentially the basket's own volatility vs USD (~4.2%): the unit adds almost nothing on top of
+whatever numeraire it is quoted in. The law is holding while these three lines stay close._
 <!-- dbtc:status:end -->
 
 _Regenerate with `python track.py` (`--force` re-downloads)._
